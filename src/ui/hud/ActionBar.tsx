@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useRoom } from "../../net/roomStore";
 import { useVoice } from "../../net/voice";
+import { keepingFullscreen } from "../fullscreen";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useIsOnline, useIsSpectator, useWaitingFor } from "../useTurn";
 import { cameraRig } from "../../three/cameraRig";
@@ -244,7 +245,12 @@ export function ActionBar() {
               }
               active={voiceActive && !voiceMuted}
               disabled={voiceBusy || !micAllowed}
-              onClick={() => (voiceActive ? toggleMute() : void startVoice())}
+              onClick={() =>
+                // Asking for the microphone costs the page its fullscreen on
+                // Android: the prompt cannot be shown over it. The wrapper
+                // takes it back at the player's next touch.
+                voiceActive ? toggleMute() : void keepingFullscreen(() => startVoice())
+              }
             />
           )}
           {online && (
