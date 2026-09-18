@@ -181,3 +181,60 @@ describe("trading before the roll", () => {
     expect(after.players[0]?.money).toBe(1600);
   });
 });
+
+describe("cards that send a player somewhere", () => {
+  /** Draws until the named card comes up, then acknowledges it. */
+  function playCard(cardId: string, from: number) {
+    let s = makeGame();
+    s = {
+      ...s,
+      phase: "card",
+      card: { deck: "chance", cardId },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, position: from } : p)),
+    };
+    return applyAction(s, { t: "ack-card" });
+  }
+
+  it("walks the token instead of snapping it to the tile", () => {
+    // "Avancez jusqu'aux Almadies" — tile 39, from tile 5.
+    const { state, events } = playCard("baraka-almadies", 5);
+
+    const walk = events.find((e) => e.t === "move-steps");
+    expect(walk).toBeDefined();
+    expect(walk?.t === "move-steps" && walk.steps).toBe(34);
+    // Nothing may jump: a player who never sees the move cannot follow it.
+    expect(events.some((e) => e.t === "teleport")).toBe(false);
+    expect(state.players[0]?.position).toBe(39);
+  });
+
+  it("walks forward past the Départ and collects the salary", () => {
+    // "Le TER vous attend" — tile 5, from tile 7, so the long way round.
+    const before = makeGame().players[0]?.money ?? 0;
+    const { state, events } = playCard("baraka-ter", 7);
+
+    const walk = events.find((e) => e.t === "move-steps");
+    expect(walk?.t === "move-steps" && walk.steps).toBe(38);
+    expect(state.players[0]?.position).toBe(5);
+    expect(state.players[0]?.money).toBe(before + 200);
+  });
+
+  it("emits the walk before whatever the destination triggers", () => {
+    const { events } = playCard("baraka-almadies", 5);
+    const walkAt = events.findIndex((e) => e.t === "move-steps");
+    const moneyAt = events.findIndex((e) => e.t === "money");
+
+    expect(walkAt).toBeGreaterThanOrEqual(0);
+    // Anything that happens *because* of the arrival has to come after it,
+    // or the board tells the story out of order.
+    if (moneyAt >= 0) expect(walkAt).toBeLessThan(moneyAt);
+  });
+
+  it("pays the salary when the nearest station is round past the Départ", () => {
+    const before = makeGame().players[0]?.money ?? 0;
+    // From tile 37 the next station is tile 5, the long way round.
+    const { state, events } = playCard("baraka-gare-1", 37);
+
+    expect(events.some((e) => e.t === "move-steps")).toBe(true);
+    expect(state.players[0]?.money).toBe(before + 200);
+  });
+});

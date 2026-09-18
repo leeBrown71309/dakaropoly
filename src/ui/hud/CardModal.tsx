@@ -29,11 +29,17 @@ export function CardModal() {
   const compact = useCompact();
   const myTurn = useIsMyTurn();
 
+  // The backdrop never takes pointer events. The card leaves on a spring that
+  // takes about two seconds to settle, and until it does this layer is still
+  // in the document — invisible, but perfectly capable of swallowing every
+  // click meant for the board, at exactly the moment the buy panel appears
+  // underneath it. Only the card itself is interactive, which is all it ever
+  // needed to be.
   return (
     <AnimatePresence>
       {cardView && (
         <motion.div
-          className="absolute inset-0 z-50 flex items-center justify-center"
+          className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -47,7 +53,7 @@ export function CardModal() {
             animate={{ y: 0, rotate: -1.4, scale: 1, opacity: 1 }}
             exit={{ y: 90, rotate: 9, scale: 0.9, opacity: 0 }}
             transition={{ type: "spring", stiffness: 210, damping: 21 }}
-            className={compact ? "mx-3 w-[262px]" : "mx-4 w-[330px]"}
+            className={`pointer-events-auto ${compact ? "mx-3 w-[262px]" : "mx-4 w-[330px]"}`}
           >
             <Deck
               deck={cardView.deck}

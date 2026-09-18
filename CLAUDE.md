@@ -150,6 +150,27 @@ A room is a code, a Supabase Realtime channel and one row holding the state.
   engine still executes an offer on the spot, with no consent from the other
   side.
 
+### Moving a token
+
+A card that says "advance to" means the token **travels**: `walkTo` in the
+engine emits `move-steps` for the forward distance, collecting the salary if
+it goes past the Départ. Nothing teleports any more. Snapping a token to its
+destination looked like nothing had happened — the piece was simply somewhere
+else the next time the player looked, which read as the board being broken.
+
+Long walks would be unwatchable at the ordinary pace (a card can send a token
+38 tiles, seven seconds of hopping), so `handleEvent` caps a whole walk at
+`WALK_BUDGET` and scampers when it has to.
+
+### Overlays that have left but are still there
+
+A modal animating out is still in the document, and an invisible layer with
+pointer events is a click trap. `CardModal` cost an hour of debugging for
+exactly this: its backdrop kept swallowing clicks for the two seconds its
+spring took to settle, right as the buy panel appeared underneath. Backdrops
+are `pointer-events-none`; only the card itself is interactive. Do not try to
+animate `pointerEvents` in an `exit` target — Framer Motion does not apply it.
+
 ### Dice
 
 `src/animation/diceRoll.ts` is pure and has no DOM or three.js dependency, so it is unit-tested. The engine draws the result first, so the throw cannot be random: `simulateThrow(a, b, seed)` runs a real cannon-es rigid-body simulation, records the poses, and only **once the dice have settled** paints the pip values onto the faces — the face that ended up pointing at the sky gets the engine's value, with opposite faces still summing to seven. The store computes the recording and sleeps for its real duration; `DiceMesh.tsx` only replays the track.
