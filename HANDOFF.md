@@ -1,0 +1,63 @@
+# HANDOFF — Dakaropoly
+
+> Document de transfert pour agent. Objectif : comprendre le projet, ce qui est fait, et terminer le reste.
+
+## 1. Vision
+
+Monopoly 3D complet, jouable dans le navigateur, pour soirées famille : **2–8 joueurs sur un seul écran** (hot-seat, chacun son tour). Plateau **Dakar** (rues/ports réels, du moins cher au plus cher), **règles officielles** strictes, **3D diorama légère** (~60 fps, zéro asset externe), UI française, touches fun (sons, animations, prix humoristiques en fin de partie). Usage personnel, pas commercial.
+
+## 2. Stack
+
+Vite + React 19 + TypeScript strict + Tailwind v4 · Three.js via React Three Fiber + drei · Zustand · Framer Motion · Vitest. Sons synthétisés WebAudio (pas de Howler, pas de fichiers audio).
+
+## 3. Architecture (ce qu'il faut retenir)
+
+```
+src/game/engine.ts     CŒUR — moteur pur sans React : applyAction(state, action) → { state, events }
+                       Machine à états : turn-start | resolving | post-roll | buy-decision | auction | debt | card | game-over
+src/game/store.ts      Zustand + file d'animations séquentielle (joue les événements : dés, déplacements, cartes, sons)
+src/game/selectors.ts  Calculs de règles (loyers, constructibilité, hypothèque, valeur nette)
+src/game/data/         board.ts (40 cases Dakar, prix officiels), cards.ts (16 Baraka + 16 Teranga), pawns.ts, colors.ts
+src/three/             Scene.tsx (canvas), BoardMesh.tsx (plateau/cases), PawnMesh.tsx, DiceMesh.tsx,
+                       geometry.ts (grille 13×13, ancres pions), textures.ts (labels canvas)
+src/ui/screens/        Home, Setup, GameScreen, GameOver
+src/ui/hud/            PlayersPanel, ActionBar, BuyPanel, AuctionPanel, DebtPanel, ManagePanel, TradeModal, CardModal, Toasts, TurnBanner
+tests/engine.test.ts   26 tests du moteur (26/26 ✅)
+```
+
+Règle d'or : **la logique va dans le moteur** (pur, testable), la 3D et l'HUD ne font que consommer l'état + jouer les événements.
+
+## 4. Ce qui est fait et vérifié ✅
+
+- Moteur complet : achat/enchères, loyers (groupe complet, maisons/hôtels, gares, services), hypothèques (+10 %), échanges, prison (3 tentatives, carte, 50 F), 3 doubles → prison, double salaire pile sur Départ, faillite (joueur ou banque → enchères), victoire dernier debout
+- 40 cases Dakar + 32 cartes à effets typés ; 8 pions ; stock banque 32 maisons/12 hôtels
+- 3D : plateau diorama, pions qui sautent case par case, dé 3D qui atterrit sur la bonne face, cartes animées, océan, caméra orbitale
+- HUD complet : achat, enchères, dette, patrimoine (construire/vendre/hypothéquer), échange, journal, toasts, bannière de tour, pluie de billets
+- Sons WebAudio synthétisés + toggle 🔊
+- `tsc` 0 erreur · `bun run build` OK · **26/26 tests** · testé visuellement dans le navigateur (partie complète : lancer, achat, impôt, rotation des tours, cartes)
+
+## 5. Ce qui reste à faire 🔲 (par priorité)
+
+1. **Polish visuel 3D** : silhouettes de monuments dakarois sur les cases premium, jet de pion plus expressif, contact shadows douces, léger tilt caméra vers le joueur actif.
+2. **Fin de partie** : l'écran GameOver existe mais n'a jamais été testé en conditions réelles (faillite en UI). Vérifier podium, stats, prix humoristiques.
+3. **Edge cases UI** : dettes à plusieurs joueurs (carte « payez 50 F à chacun »), enchères avec 3+ enchérisseurs en rotation, timer d'enchère avec suspense (prévu, non fait).
+4. **Ambiance sonore** : boucle de fond légère + volume réglable.
+5. **Règles maison configurables** (écran d'options avant partie : pot au parking, double salaire Départ on/off…).
+6. **Plus tard** : mode en ligne (session partagée, chacun sur son appareil) — le moteur pur rend ça faisable.
+
+## 6. Pièges / notes techniques pour l'agent
+
+- Le hook `forced` sur l'action `roll` (`{ t: "roll", forced: { a, b } }`) existe pour les tests — ne pas l'exposer dans l'UI.
+- Labels 3D = canvas textures (voir `src/three/textures.ts`) : pas de police web, tout est caché.
+- Orientation plateau : textes TOUS à l'endroit (lisibles caméra unique) via `SIDE_LAYOUT` dans `geometry.ts` — ne pas réintroduire de rotation par côté.
+- Le store garde l'état entre HMR — faire un reload complet pour repartir de zéro.
+- Une partie en cours + modif du code = l'écran peut repasser au setup : comportement HMR, pas un bug.
+- Vérifs imposées après chaque changement : `bun x tsc -p tsconfig.json --noEmit`, `bun run test`, et `bun run build` avant livraison.
+
+## 7. Commandes
+
+```bash
+bun install && bun run dev   # http://localhost:5173
+bun run test                 # 26 tests moteur
+bun run build                # tsc + build prod
+```

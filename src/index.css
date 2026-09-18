@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #0e1420;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    "Segoe UI",
+    sans-serif;
+}
+
+::selection {
+  background: rgba(255, 180, 60, 0.35);
+}
