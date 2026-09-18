@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useRoom } from "../../net/roomStore";
-import { formatCode, normaliseCode, CODE_SIZE, seatedInOrder } from "../../net/room";
+import { formatCode, inviteLink, normaliseCode, CODE_SIZE, seatedInOrder } from "../../net/room";
 import { PAWN_NAMES, PAWN_SHAPES, PLAYER_COLORS } from "../../game/data/pawns";
 import { useCompact } from "../useViewport";
+import { useCopy } from "../useCopy";
+import { quitToHome } from "../leaveGame";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { PawnGlyph } from "../icons/PawnGlyph";
@@ -22,10 +24,10 @@ const MAX_PLAYERS = 8;
 export function Online() {
   const mode = useGame((s) => s.onlineMode);
   const pendingCode = useGame((s) => s.pendingCode);
-  const goHome = useGame((s) => s.goHome);
   const compact = useCompact();
 
   const code = useRoom((s) => s.code);
+  const pending = useRoom((s) => s.pending);
   const busy = useRoom((s) => s.busy);
   const error = useRoom((s) => s.error);
   const clearError = useRoom((s) => s.clearError);
@@ -60,9 +62,15 @@ export function Online() {
         <div className={`scroll-paper h-full overflow-y-auto ${compact ? "px-3 py-3" : "px-6 py-8"}`}>
           <div className={`mx-auto max-w-full ${compact ? "w-[760px]" : "w-[620px]"}`}>
             <div className={`flex items-center gap-3 ${compact ? "mb-2" : "mb-4"}`}>
-              <Fitting icon="arrowLeft" label="Retour" onClick={goHome} />
+              <Fitting icon="arrowLeft" label="Retour" onClick={quitToHome} />
               <h1 className={`u-display text-sand-100 ${compact ? "text-[16px]" : "text-[22px]"}`}>
-                {code ? "Salon" : joining ? "Rejoindre une partie" : "Créer une partie"}
+                {pending
+                  ? "Partie en cours"
+                  : code
+                    ? "Salon"
+                    : joining
+                      ? "Rejoindre une partie"
+                      : "Créer une partie"}
               </h1>
             </div>
 
@@ -79,7 +87,9 @@ export function Online() {
               </button>
             )}
 
-            {code ? (
+            {pending ? (
+              <Resume compact={compact} />
+            ) : code ? (
               <Lobby compact={compact} />
             ) : (
               <Card className={compact ? "p-3" : "p-4"}>
@@ -211,7 +221,7 @@ function Lobby({ compact }: { compact: boolean }) {
   const start = useRoom((s) => s.start);
   const leave = useRoom((s) => s.leave);
   const goHome = useGame((s) => s.goHome);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
 
   const me = seats.find((s) => s.clientId === clientId);
   const players = seatedInOrder(seats);
@@ -220,24 +230,6 @@ function Lobby({ compact }: { compact: boolean }) {
   const takenPawns = seats
     .filter((s) => s.clientId !== clientId && s.pawn !== null)
     .map((s) => s.pawn as number);
-
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 2000);
-    return () => clearTimeout(t);
-  }, [copied]);
-
-  const share = async () => {
-    const url = `${location.origin}${location.pathname}?s=${code}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-    } catch {
-      // Clipboard refused (insecure context, or permission): the code is on
-      // screen in large type anyway, which is what people read out loud.
-      setCopied(false);
-    }
-  };
 
   const quit = () => {
     void leave().then(goHome);
@@ -259,9 +251,24 @@ function Lobby({ compact }: { compact: boolean }) {
         <p className="mt-1 text-[12px] text-ink-500">
           Les autres le saisissent depuis « Rejoindre une partie ».
         </p>
-        <Button face="bone" size="sm" icon={copied ? "check" : "exchange"} className="mt-2" onClick={share}>
-          {copied ? "Lien copié" : "Copier le lien"}
-        </Button>
+        <div className="mt-2 flex justify-center gap-1.5">
+          <Button
+            face="bone"
+            size="sm"
+            icon={copied === "code" ? "check" : "key"}
+            onClick={() => copy("code", code)}
+          >
+            {copied === "code" ? "Code copié" : "Copier le code"}
+          </Button>
+          <Button
+            face="bone"
+            size="sm"
+            icon={copied === "link" ? "check" : "exchange"}
+            onClick={() => copy("link", inviteLink(code))}
+          >
+            {copied === "link" ? "Lien copié" : "Copier le lien"}
+          </Button>
+        </div>
       </Card>
 
       <Card className={`mt-2 ${compact ? "p-3" : "p-4"}`}>
@@ -343,6 +350,97 @@ function Lobby({ compact }: { compact: boolean }) {
           Il faut au moins deux joueurs assis pour commencer.
         </p>
       )}
+    </>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * The door into a game that has already started.
+ *
+ * The whole table is shown rather than only what is free, because the
+ * question someone arriving late actually has is where their friends have
+ * got to — and because a chair marked as still held explains why it cannot
+ * be taken far better than leaving it out would.
+ */
+function Resume({ compact }: { compact: boolean }) {
+  const pending = useRoom((s) => s.pending);
+  const busy = useRoom((s) => s.busy);
+  const resume = useRoom((s) => s.resume);
+  const watch = useRoom((s) => s.watch);
+  const cancelPending = useRoom((s) => s.cancelPending);
+
+  if (!pending) return null;
+  const free = pending.offers.filter((o) => o.free);
+
+  return (
+    <>
+      <Card className={compact ? "p-3" : "p-4"}>
+        <Label>Code {formatCode(pending.code)}</Label>
+        <p className={`mt-1 leading-snug text-ink-700 ${compact ? "text-[12px]" : "text-[13px]"}`}>
+          {free.length > 0
+            ? "La partie a déjà commencé. Une place vous attend, ou installez-vous pour regarder."
+            : "La partie a déjà commencé et toutes les places sont tenues. Vous pouvez la suivre en spectateur."}
+        </p>
+
+        <BrassRule className="my-2.5" />
+
+        <div className={compact ? "grid grid-cols-2 gap-1.5" : "flex flex-col gap-1.5"}>
+          {pending.offers.map((o) => (
+            <div
+              key={o.seat}
+              className="flex items-center gap-2.5 rounded-[3px] px-2.5 py-1.5"
+              style={{
+                background: o.free ? "rgba(232,162,59,.12)" : "rgba(120,95,60,.07)",
+                boxShadow: o.free
+                  ? "inset 0 0 0 1px rgba(168,112,31,.55)"
+                  : "inset 0 0 0 1px rgba(110,86,52,.2)",
+              }}
+            >
+              <span
+                style={{ color: PLAYER_COLORS[o.pawn], opacity: o.out ? 0.35 : 1 }}
+                className="shrink-0"
+              >
+                <PawnGlyph pawn={o.pawn} size={22} />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] font-bold text-ink-900">
+                {o.name}
+              </span>
+              {o.free ? (
+                <Button
+                  face={o.mine ? "gold" : "teal"}
+                  size="sm"
+                  icon="check"
+                  disabled={busy}
+                  onClick={() => void resume(o.seat)}
+                >
+                  {o.mine ? "Ma place" : "Prendre"}
+                </Button>
+              ) : (
+                <span className="u-label shrink-0 text-ink-300">{o.out ? "éliminé" : "en jeu"}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <div className={`flex items-center gap-2 ${compact ? "mt-3" : "mt-5"}`}>
+        <Button face="slate" size={compact ? "sm" : "md"} icon="arrowLeft" onClick={cancelPending}>
+          Un autre code
+        </Button>
+        <Button
+          face="bone"
+          size={compact ? "sm" : "md"}
+          icon="ranking"
+          className="ml-auto"
+          disabled={busy}
+          onClick={() => void watch()}
+        >
+          Regarder la partie
+        </Button>
+      </div>
     </>
   );
 }

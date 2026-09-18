@@ -47,9 +47,17 @@ interface Store {
   screen: Screen;
   game: GameState | null;
   /**
-   * Which seat this device speaks for, or `null` in a hot-seat game where it
-   * speaks for whoever's turn it is. Online it is the player's own seat, and
-   * every interactive control is gated against it.
+   * Whether this board is being played across devices.
+   *
+   * Kept apart from `localPlayerId` because a spectator online has no seat
+   * either, and reading `null` as "speaks for everyone" would hand them the
+   * whole table.
+   */
+  online: boolean;
+  /**
+   * Which seat this device speaks for. `null` in a hot-seat game, where it
+   * speaks for whoever's turn it is, and `null` again for a spectator, who
+   * speaks for nobody — `online` is what tells the two apart.
    */
   localPlayerId: number | null;
   visPos: Record<number, number>;
@@ -85,7 +93,8 @@ interface Store {
   startGame: (defs: { name: string; pawn: number }[], seed?: number) => void;
   /**
    * Takes on a game that was built elsewhere — the authoritative snapshot of
-   * an online room, either at kickoff or after a resync.
+   * an online room, either at kickoff or after a resync. A `null` seat is a
+   * spectator: they watch the same board and never act on it.
    */
   adoptGame: (game: GameState, localPlayerId: number | null) => void;
   /** Plays an action here and now. Online this is driven by the wire. */
@@ -139,7 +148,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function pushToast(text: string, tone: Toast["tone"]): void {
+/**
+ * Pins a paper slip in the corner. Exported because the network layer has
+ * things to say that the engine never will — somebody leaving the room, a
+ * connection coming back — and they belong in the same running commentary
+ * as everything else that happens at the table.
+ */
+export function pushToast(text: string, tone: Toast["tone"]): void {
   const t: Toast = { id: Date.now() + Math.random(), text, tone };
   useGame.setState((s) => ({ toasts: [...s.toasts, t] }));
   setTimeout(() => {
@@ -293,6 +308,13 @@ async function handleEvent(ev: GameEvent): Promise<void> {
 interface PersistedState {
   screen: Screen;
   game: GameState | null;
+  /**
+   * Kept across a reload because they say which game this is, not how it
+   * looks: a device that came back from an online room owning nobody would
+   * behave as a hot-seat game and let its player act for the whole table.
+   */
+  online: boolean;
+  localPlayerId: number | null;
   soundOn: boolean;
   settings: Settings;
 }
@@ -319,6 +341,7 @@ export const useGame = create<Store>()(
     (set, get) => ({
     screen: "home",
     game: null,
+    online: false,
     localPlayerId: null,
     visPos: {},
     dice: null,
@@ -351,6 +374,8 @@ export const useGame = create<Store>()(
       set({
         screen: "home",
         game: null,
+        online: false,
+        localPlayerId: null,
         visPos: {},
         dice: null,
         diceThrow: null,
@@ -377,6 +402,8 @@ export const useGame = create<Store>()(
       set({
         screen: "game",
         game,
+        online: false,
+        localPlayerId: null,
         visPos,
         dice: null,
         diceThrow: null,
@@ -402,6 +429,7 @@ export const useGame = create<Store>()(
       set({
         screen: game.phase === "game-over" ? "over" : "game",
         game,
+        online: true,
         localPlayerId,
         visPos,
         dice: null,
@@ -440,6 +468,14 @@ export const useGame = create<Store>()(
       }
     },
     dispatch: (action) => {
+      // A spectator has a relay like everyone else, and anything they sent
+      // would be replayed by the whole room. The HUD gives them no buttons,
+      // so reaching here means something slipped through rather than that
+      // they meant it.
+      if (get().online && get().localPlayerId === null) {
+        pushToast("Vous suivez la partie en spectateur", "info");
+        return;
+      }
       // Online, an action is not applied where it is played: it goes out on
       // the wire and every client — this one included — applies it when it
       // comes back, so all devices replay the same sequence in the same
@@ -480,6 +516,8 @@ export const useGame = create<Store>()(
       partialize: (s): PersistedState => ({
         screen: s.screen,
         game: s.game,
+        online: s.online,
+        localPlayerId: s.localPlayerId,
         soundOn: s.soundOn,
         settings: s.settings,
       }),

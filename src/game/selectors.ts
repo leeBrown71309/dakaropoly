@@ -140,3 +140,16 @@ export function actorFor(s: GameState): number | null {
   if (s.phase === "auction" && s.auction) return s.auction.order[0] ?? null;
   return s.current;
 }
+
+/**
+ * Whether a device is entitled to play right now.
+ *
+ * Hot-seat, one device speaks for whoever is to move, so the answer is always
+ * yes. Online, only the device holding the legal actor's seat — and a
+ * spectator holds no seat at all, so never. Those two `null`s mean opposite
+ * things, which is exactly why `online` is passed rather than inferred.
+ */
+export function mayAct(s: GameState, online: boolean, localPlayerId: number | null): boolean {
+  if (!online) return true;
+  return localPlayerId !== null && actorFor(s) === localPlayerId;
+}

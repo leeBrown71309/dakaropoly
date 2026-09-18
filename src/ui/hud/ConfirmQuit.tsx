@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { quitToHome } from "../leaveGame";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { Money } from "../kit/Money";
@@ -13,7 +14,6 @@ import { Icon } from "../icons/Icon";
 export function ConfirmQuit() {
   const open = useGame((s) => s.confirmQuitOpen);
   const cancelQuit = useGame((s) => s.cancelQuit);
-  const goHome = useGame((s) => s.goHome);
   const game = useGame((s) => s.game);
   const compact = useCompact();
 
@@ -85,7 +85,7 @@ export function ConfirmQuit() {
                   <Button face="bone" size={compact ? "sm" : "md"} block onClick={cancelQuit}>
                     Continuer à jouer
                   </Button>
-                  <Button face="clay" size={compact ? "sm" : "md"} icon="flag" block onClick={goHome}>
+                  <Button face="clay" size={compact ? "sm" : "md"} icon="flag" block onClick={quitToHome}>
                     Quitter
                   </Button>
                 </div>

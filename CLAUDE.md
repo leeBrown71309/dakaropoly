@@ -104,6 +104,10 @@ A phone held in landscape is the smallest board the game supports: roughly 740×
 ### Online play — `src/net/`
 
 A room is a code, a Supabase Realtime channel and one row holding the state.
+**`supabase/schema.sql` is the whole backend** — tables, indexes and the
+functions every path goes through — kept in the repository and applied by
+hand. Read it before changing anything about rooms or seats: the rules that
+matter live there, not in the client.
 
 - **Actions are relayed, not states.** Every client runs the same pure engine
   over the same seeded randomness, so replaying the sequence lands them all on
@@ -131,9 +135,10 @@ A room is a code, a Supabase Realtime channel and one row holding the state.
 - **Identity is per tab** (`sessionStorage`), not per browser. Two tabs of one
   browser sharing an id meant the second player silently took over the first
   one's seat — and two tabs is how anyone tries this before a real game.
-- **The tables cannot be read at all.** Rooms and rosters are reachable only
-  through `get_room(code)`, and writes only through `create_room`,
-  `claim_seat`, `open_room` and `advance_room`. Those functions are
+- **The tables cannot be read at all, and nothing writes to one directly.**
+  Rooms and rosters are reachable only through `get_room(code)`, and writes
+  only through `create_room`, `claim_seat`, `resume_seat`, `leave_room`,
+  `open_room`, `touch_seat` and `advance_room`. Those functions are
   `SECURITY DEFINER`, take the caller's identity from `auth.uid()` rather than
   from the request body, and require a session. So the room code is a real key
   — there is no way to list other people's games — and passing somebody else's
@@ -142,13 +147,56 @@ A room is a code, a Supabase Realtime channel and one row holding the state.
   naming the setting rather than letting the game die on an SQL error later.
 - A policy that subqueries another table is a trap here: `rooms_update` tested
   membership by reading `room_players`, which is denied, so kicking off a game
-  updated nothing and reported no error. Keep authorisation inside the
-  functions, where it can be read in one place.
+  updated nothing and reported no error. Leaving a room had the same shape —
+  a plain `delete` that row level security quietly filtered to nothing, which
+  PostgREST reports as a success — so a player who pressed Quitter kept their
+  chair. **Both were fixed the same way, and it is the rule here: authorisation
+  lives inside the functions, and every call checks the error it gets back.**
+- **`localPlayerId === null` means two different things**: a hot-seat game,
+  where one device speaks for whoever is to move, and an online spectator, who
+  speaks for nobody. `online` in the store is what tells them apart, and
+  `mayAct` in `selectors.ts` is the only place that decides. Reading the seat
+  alone handed spectators the whole table.
 - Creating a room sweeps rooms untouched for 24 hours, so finished games do
   not accumulate. There is no scheduler to maintain.
 - Trades are **disabled online** until they become propose-then-accept: the
   engine still executes an offer on the spot, with no consent from the other
   side.
+
+### Leaving a room, and coming back
+
+A seat is not abandoned the moment a screen goes dark. `room_players.last_seen`
+is refreshed every twenty seconds by `touch_seat`, and on every move; a chair
+is offered to somebody else only once it has been quiet for **75 seconds** —
+long enough to survive a tunnel, a locked phone or a reload. That threshold
+lives in SQL, and `get_room` returns `absent` per seat, because a client that
+could assert "they are gone" could take a chair out from under someone.
+
+- **Leaving on purpose gives the chair up at once**: `leave_room` deletes the
+  row, and drops the room too when the host walks out of a lobby.
+- **The room is remembered for the life of the tab** — `sessionStorage`, the
+  same lifetime as the identity that holds the seat. Anywhere longer-lived and
+  a second tab would try to walk back into a game it was never in.
+- **A reload rejoins by itself.** `restore()` runs from `App.tsx` and takes the
+  chair back with `resume_seat`, which always lets a device reclaim its *own*
+  seat however long it was away. A room that has disappeared sends the player
+  home; anything else — no signal, a server having a moment — keeps the room
+  and offers Reconnecter in the settings panel rather than binning the evening.
+- **Between the reload and the channel coming back, nothing may be played.**
+  The board is restored from local storage ready to go, so a *refusing* relay
+  is installed at rehydrate and replaced by the real one once connected. An
+  action applied in that gap would land on one device and nowhere else.
+- **Taking a seat rewrites `rooms.seat_order` at that index** rather than
+  rebuilding the list: the engine numbers players by their position in it, so
+  rebuilding would renumber everyone still at the table. The name and pawn come
+  from the board, not from the roster row being replaced.
+- Arrivals and departures are announced as toasts driven by Realtime presence,
+  and only once play has begun — in the lobby the roster says it better, and
+  the slips are not mounted on that screen. The first 1.5 s after subscribing
+  is silent, because the server replays everyone already in the room.
+- **The room code lives in the settings panel** (`RoomPanel`) for the whole
+  game, with the invitation link beside it. It is the only way back in, and it
+  otherwise disappears the moment the lobby closes.
 
 ### Moving a token
 
