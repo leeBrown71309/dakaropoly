@@ -44,6 +44,12 @@ export interface Pending {
   offers: SeatOffer[];
 }
 
+/** Somebody standing in the room, tracked by presence rather than by a row. */
+export type Watcher = { clientId: string; name: string };
+
+/** What each device puts in the channel's presence payload. */
+type WatchPresence = { at: number; name: string | null };
+
 interface RoomState {
   code: string | null;
   clientId: string | null;
@@ -54,6 +60,19 @@ interface RoomState {
   seatOrder: string[];
   /** Client ids currently connected, from Realtime presence. */
   present: string[];
+  /**
+   * This device's own name, from the join form. Tracked in presence so the
+   * others can put a name to a spectator, and persisted for the tab so a
+   * reload comes back announcing itself correctly.
+   */
+  myName: string | null;
+  /**
+   * The connected clients with no seat at the table. Derived from presence,
+   * never stored in the database — a spectator is somebody standing in the
+   * room, which is a fact about the channel, not about the game. Persisted
+   * for the tab all the same, so the list survives a reload whole.
+   */
+  watchers: Watcher[];
   /** Snapshot version this client has applied. */
   version: number;
   error: string | null;
@@ -109,6 +128,8 @@ export const useRoom = create<RoomState>()(
       seats: [],
       seatOrder: [],
       present: [],
+      myName: null,
+      watchers: [],
       version: 0,
       error: null,
       busy: false,
@@ -123,7 +144,7 @@ export const useRoom = create<RoomState>()(
         try {
           const clientId = await ensureSession();
           const code = await createRoom(clientId, name, pawn);
-          set({ code, clientId, hostId: clientId, status: "lobby" });
+          set({ code, clientId, hostId: clientId, status: "lobby", myName: name });
           await connect(code, clientId, set, get);
           await refreshSeats(code, set);
         } catch (e) {
@@ -140,7 +161,7 @@ export const useRoom = create<RoomState>()(
           const found = await fetchRoomAndSeats(code);
           if (!found) throw new Error("Aucun salon avec ce code");
           const { room, seats } = found;
-          set({ clientId });
+          set({ clientId, myName: name });
 
           // A game already under way is not refused any more: the table is
           // shown as it stands, with whichever chairs are free to take.
@@ -181,14 +202,20 @@ export const useRoom = create<RoomState>()(
         }
       },
 
+      /**
+       * The spectator door. Nothing is written to the database: standing in
+       * a room is a fact about the channel, not about the game. The name
+       * travels in this device's presence payload, every client rebuilds the
+       * list from the channel on each sync, and the tab caches it so a
+       * reload does not empty it.
+       */
       watch: async () => {
         const pending = get().pending;
         if (!pending) return;
         set({ busy: true, error: null });
         try {
           const clientId = await ensureSession();
-          await claimSeat(pending.code, clientId, pending.name, null);
-          set({ clientId, pending: null });
+          set({ clientId, myName: pending.name, pending: null });
           await enterPlaying(pending.code, clientId, set, get);
         } catch (e) {
           set({ error: message(e) });
@@ -202,6 +229,10 @@ export const useRoom = create<RoomState>()(
         if (!code || !clientId) return;
         try {
           await claimSeat(code, clientId, name, pawn);
+          set({ myName: name });
+          // The presence payload carries the name to the roster panel, so it
+          // has to follow a rename rather than keep announcing the old one.
+          void channel?.track({ at: Date.now(), name } satisfies WatchPresence);
           await refreshSeats(code, set);
           channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
         } catch (e) {
@@ -227,6 +258,9 @@ export const useRoom = create<RoomState>()(
           const seatOrder = seated.map((s) => s.clientId);
           await startRoom(code, seed, game, seatOrder);
           set({ status: "playing", version: 1, seatOrder });
+          // The seating just froze: whoever held a seat is a player now, and
+          // everybody left standing is a spectator.
+          syncWatchers();
           channel?.send({ type: "broadcast", event: "room", payload: { k: "start" } satisfies Wire });
           adopt(game, seatOrder, clientId);
         } catch (e) {
@@ -256,6 +290,8 @@ export const useRoom = create<RoomState>()(
           seats: [],
           seatOrder: [],
           present: [],
+          myName: null,
+          watchers: [],
           version: 0,
           pending: null,
         });
@@ -285,7 +321,7 @@ export const useRoom = create<RoomState>()(
           // The board on this device cannot be played on alone.
           if (!found) {
             setActionRelay(null);
-            set({ code: null, clientId: null, seats: [], seatOrder: [], present: [] });
+            set({ code: null, clientId: null, seats: [], seatOrder: [], present: [], myName: null, watchers: [] });
             useGame.getState().goHome();
             pushToast("Le salon n'existe plus", "bad");
             return;
@@ -333,7 +369,14 @@ export const useRoom = create<RoomState>()(
        * does not have.
        */
       storage: createJSONStorage(() => sessionStorage),
-      partialize: (s) => ({ code: s.code }),
+      /*
+       * `myName` and the watchers come along for the ride. The name because
+       * the reconnected device must announce itself with it again, and the
+       * spectator list because it lives here, not in the database — a reload
+       * should show the people standing in the room at once, and let the
+       * first presence sync correct whoever has since slipped away.
+       */
+      partialize: (s) => ({ code: s.code, myName: s.myName, watchers: s.watchers }),
       onRehydrateStorage: () => (state) => {
         // Installed here rather than after the first render: the board comes
         // back from storage ready to play, and nothing may be played until
@@ -357,6 +400,36 @@ type Setter = (partial: Partial<RoomState>) => void;
 
 async function refreshSeats(code: string, set: Setter): Promise<void> {
   set({ seats: await fetchSeats(code) });
+  // Who is standing depends on who is sitting: a fresh roster can turn a
+  // watcher into a player, or the other way round.
+  syncWatchers();
+}
+
+/**
+ * Splits the channel's presence into the table and the people standing
+ * behind it, and stores the standing ones as the room's watchers.
+ *
+ * A spectator has no row anywhere: the channel says they are here, and the
+ * name is whatever their own device put in its presence payload. Everyone
+ * left out of the seating — every id in the lobby's roster, and every id in
+ * a started game's `seat_order` — is at the table; the rest are watching.
+ */
+function syncWatchers(): void {
+  const state = channel?.presenceState() ?? {};
+  const { seatOrder, seats } = useRoom.getState();
+  const seated = new Set<string>(seatOrder);
+  for (const s of seats) if (s.seat !== null) seated.add(s.clientId);
+
+  const watchers: Watcher[] = [];
+  for (const [clientId, metas] of Object.entries(state)) {
+    if (seated.has(clientId)) continue;
+    // `unknown` because the payload is whatever some device chose to track;
+    // anything that is not a usable string reads as an unnamed spectator.
+    const name = (metas[0] as Partial<WatchPresence> | undefined)?.name;
+    watchers.push({ clientId, name: typeof name === "string" && name ? name : "Un spectateur" });
+  }
+  watchers.sort((a, b) => a.name.localeCompare(b.name, "fr"));
+  useRoom.setState({ present: Object.keys(state), watchers });
 }
 
 /** Re-reads the table behind an offer list that has just been refused. */
@@ -392,6 +465,9 @@ async function enterPlaying(
   if (!found?.room.state) return;
   set({ status: found.room.status, version: found.room.version, seatOrder: found.room.seatOrder });
   adopt(found.room.state, found.room.seatOrder, clientId);
+  // The seating was read after the presence sync that carried this device in,
+  // so the standing-and-sitting split is worked out once more here.
+  syncWatchers();
   channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
 }
 
@@ -405,6 +481,7 @@ async function resync(code: string, clientId: string, set: Setter): Promise<void
   if (!found?.room.state) return;
   set({ version: found.room.version, status: found.room.status, seatOrder: found.room.seatOrder });
   adopt(found.room.state, found.room.seatOrder, clientId);
+  syncWatchers();
 }
 
 function stopHeartbeat(): void {
@@ -431,6 +508,10 @@ function startHeartbeat(code: string): void {
 function nameFor(clientId: string, get: () => RoomState): string {
   const seat = get().seats.find((s) => s.clientId === clientId);
   if (seat) return seat.name;
+  // A spectator has no row to read a name from; the roster panel carries
+  // theirs, from the name in their own presence payload.
+  const watcher = get().watchers.find((w) => w.clientId === clientId);
+  if (watcher) return watcher.name;
   const index = get().seatOrder.indexOf(clientId);
   return useGame.getState().game?.players[index]?.name ?? "Un joueur";
 }
@@ -460,8 +541,7 @@ async function connect(
   });
 
   channel.on("presence", { event: "sync" }, () => {
-    const state = channel?.presenceState() ?? {};
-    set({ present: Object.keys(state) });
+    syncWatchers();
   });
 
   // Announced only once play has begun. In the lobby the roster says it
@@ -485,7 +565,12 @@ async function connect(
   });
 
   await channel.subscribe(async (status) => {
-    if (status === "SUBSCRIBED") await channel?.track({ at: Date.now() });
+    if (status === "SUBSCRIBED") {
+      // The name rides along in the payload because a spectator writes no
+      // row anywhere: presence is all the room will ever have of them, and
+      // it has to say who they are.
+      await channel?.track({ at: Date.now(), name: get().myName } satisfies WatchPresence);
+    }
   });
 
   startHeartbeat(code);
@@ -520,6 +605,9 @@ async function handle(
       if (!found?.room.state) return;
       set({ status: found.room.status, version: found.room.version, seatOrder: found.room.seatOrder });
       adopt(found.room.state, found.room.seatOrder, clientId);
+      // Kickoff freezes the seating, and whoever was standing when it froze
+      // is a spectator from here on.
+      syncWatchers();
       return;
     }
 

@@ -41,6 +41,7 @@ export type IconName =
   | "cog"
   | "book"
   | "ranking"
+  | "eye"
   | "plus"
   | "minus"
   | "close";
@@ -204,6 +205,12 @@ const ICONS: Record<IconName, ReactNode> = {
     </>
   ),
   ranking: <path d="M4.4 6.6h15.2M4.4 12h10.4M4.4 17.4h6" />,
+  eye: (
+    <>
+      <path d="M2.9 12Q12 4.9 21.1 12 12 19.1 2.9 12Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </>
+  ),
   recenter: (
     <>
       <path d="M4 8.7v-3a1.7 1.7 0 0 1 1.7-1.7h3" />

@@ -17,6 +17,9 @@ export type Screen = "home" | "setup" | "online" | "game" | "over";
 /** Whether the online screen opens on creating a room or joining one. */
 export type OnlineMode = "create" | "join";
 
+/** Which face of the left roster is showing. */
+export type RosterTab = "players" | "spectators";
+
 /** Pacing and audio the player can tune from the settings panel. */
 export interface Settings {
   /** How long a paper slip stays pinned, in milliseconds. */
@@ -83,6 +86,15 @@ interface Store {
   manageOpen: boolean;
   tradeOpen: boolean;
   logOpen: boolean;
+  /**
+   * The left roster: folded to a tab to clear the board, and which of its
+   * two faces — players or spectators — is showing. View only, and not
+   * saved: it says how the screen looks, not which game it is.
+   */
+  rosterOpen: boolean;
+  rosterTab: RosterTab;
+  toggleRoster: () => void;
+  setRosterTab: (tab: RosterTab) => void;
   openSetup: () => void;
   onlineMode: OnlineMode;
   /** `code` pre-fills the field when arriving from a shared link. */
@@ -359,6 +371,10 @@ export const useGame = create<Store>()(
     manageOpen: false,
     tradeOpen: false,
     logOpen: false,
+    rosterOpen: true,
+    rosterTab: "players",
+    toggleRoster: () => set((s) => ({ rosterOpen: !s.rosterOpen })),
+    setRosterTab: (rosterTab) => set({ rosterTab }),
     openSetup: () => set({ screen: "setup" }),
     onlineMode: "create",
     pendingCode: "",
@@ -388,6 +404,8 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        rosterOpen: true,
+        rosterTab: "players",
         rainKey: 0,
       });
     },
@@ -416,6 +434,8 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        rosterOpen: true,
+        rosterTab: "players",
         rainKey: 0,
       });
     },
@@ -445,6 +465,8 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        rosterOpen: true,
+        rosterTab: "players",
         rainKey: 0,
       });
     },
