@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useGame } from "./game/store";
 import { normaliseCode } from "./net/room";
+import { useRoom } from "./net/roomStore";
 import { onlineAvailable } from "./net/supabase";
 import { Home } from "./ui/screens/Home";
 import { Setup } from "./ui/screens/Setup";
@@ -26,23 +27,33 @@ function Screen() {
 }
 
 /**
- * An invitation is a link, not a code read down the phone: `?s=ABC123` drops
- * the guest straight onto the join form with the code already filled in.
+ * How a tab arrives at an online game, in the two ways it can.
+ *
+ * An invitation is a link rather than a code read down the phone: `?s=ABC123`
+ * drops the guest straight onto the join form with the code filled in. A
+ * reload is the other way in, and the quieter one — the room is remembered
+ * for the life of the tab, so a refresh, a crash or a phone that gave up
+ * comes back to the same chair instead of to the title screen.
  */
-function useInviteLink(): void {
+function useOnlineEntry(): void {
   const openOnline = useGame((s) => s.openOnline);
   useEffect(() => {
     if (!onlineAvailable) return;
-    const code = normaliseCode(new URLSearchParams(location.search).get("s") ?? "");
-    if (!code) return;
-    openOnline("join", code);
-    // Drop the parameter so a reload does not reopen the form over a game.
-    history.replaceState(null, "", location.pathname);
+
+    const invited = normaliseCode(new URLSearchParams(location.search).get("s") ?? "");
+    if (invited) {
+      openOnline("join", invited);
+      // Drop the parameter so a reload does not reopen the form over a game.
+      history.replaceState(null, "", location.pathname);
+      return;
+    }
+
+    void useRoom.getState().restore();
   }, [openOnline]);
 }
 
 export function App() {
-  useInviteLink();
+  useOnlineEntry();
   return (
     <>
       <Screen />

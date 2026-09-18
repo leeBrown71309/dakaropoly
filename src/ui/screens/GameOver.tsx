@@ -8,6 +8,7 @@ import { Button } from "../kit/Button";
 import { Money } from "../kit/Money";
 import { Icon, type IconName } from "../icons/Icon";
 import { PlayerMark } from "../icons/PlayerMark";
+import { quitToHome } from "../leaveGame";
 
 interface AwardDef {
   icon: IconName;
@@ -65,7 +66,7 @@ function computeAwards(game: GameState): { icon: IconName; label: string; name: 
 export function GameOver() {
   const game = useGame((s) => s.game);
   const openSetup = useGame((s) => s.openSetup);
-  const goHome = useGame((s) => s.goHome);
+
   const compact = useCompact();
   if (!game) return null;
 
@@ -183,7 +184,7 @@ export function GameOver() {
               <Button face="gold" size={compact ? "md" : "lg"} icon="dice" onClick={openSetup}>
                 Revanche
               </Button>
-              <Button face="bone" size={compact ? "md" : "lg"} icon="arrowLeft" onClick={goHome}>
+              <Button face="bone" size={compact ? "md" : "lg"} icon="arrowLeft" onClick={quitToHome}>
                 Menu
               </Button>
             </div>

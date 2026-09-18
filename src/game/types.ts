@@ -115,6 +115,14 @@ export interface GameState {
   decks: { chance: string[]; chest: string[] };
   discards: { chance: string[]; chest: string[] };
   turnEnded: boolean;
+  /**
+   * An offer lying on the table, waiting for the other side to answer.
+   *
+   * A trade used to execute the moment it was proposed, which between
+   * friends on one screen is only impolite — online it is a way to take
+   * somebody's property without asking them.
+   */
+  pendingTrade: PendingTrade | null;
   rng: number;
   log: string[];
 }
@@ -184,6 +192,12 @@ export interface TradeOffer {
   takeProps: number[];
 }
 
+/** Who put an offer on the table, and what it is. The recipient is `offer.to`. */
+export interface PendingTrade {
+  from: number;
+  offer: TradeOffer;
+}
+
 export type Action =
   | { t: "roll"; forced?: { a: number; b: number } }
   | { t: "ack-card" }
@@ -200,7 +214,10 @@ export type Action =
   | { t: "use-jail-card" }
   | { t: "pay-debt" }
   | { t: "declare-bankruptcy" }
-  | { t: "propose-trade"; offer: TradeOffer };
+  | { t: "offer-trade"; offer: TradeOffer }
+  | { t: "accept-trade" }
+  | { t: "reject-trade" }
+  | { t: "withdraw-trade" };
 
 export type ApplyResult = { state: GameState; events: GameEvent[] };
 

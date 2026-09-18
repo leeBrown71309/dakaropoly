@@ -17,6 +17,9 @@ export type Screen = "home" | "setup" | "online" | "game" | "over";
 /** Whether the online screen opens on creating a room or joining one. */
 export type OnlineMode = "create" | "join";
 
+/** Which face of the left roster is showing. */
+export type RosterTab = "players" | "spectators";
+
 /** Pacing and audio the player can tune from the settings panel. */
 export interface Settings {
   /** How long a paper slip stays pinned, in milliseconds. */
@@ -47,9 +50,17 @@ interface Store {
   screen: Screen;
   game: GameState | null;
   /**
-   * Which seat this device speaks for, or `null` in a hot-seat game where it
-   * speaks for whoever's turn it is. Online it is the player's own seat, and
-   * every interactive control is gated against it.
+   * Whether this board is being played across devices.
+   *
+   * Kept apart from `localPlayerId` because a spectator online has no seat
+   * either, and reading `null` as "speaks for everyone" would hand them the
+   * whole table.
+   */
+  online: boolean;
+  /**
+   * Which seat this device speaks for. `null` in a hot-seat game, where it
+   * speaks for whoever's turn it is, and `null` again for a spectator, who
+   * speaks for nobody — `online` is what tells the two apart.
    */
   localPlayerId: number | null;
   visPos: Record<number, number>;
@@ -75,6 +86,17 @@ interface Store {
   manageOpen: boolean;
   tradeOpen: boolean;
   logOpen: boolean;
+  /** The written chat, online only. View state, like the journal beside it. */
+  chatOpen: boolean;
+  /**
+   * The left roster: folded to a tab to clear the board, and which of its
+   * two faces — players or spectators — is showing. View only, and not
+   * saved: it says how the screen looks, not which game it is.
+   */
+  rosterOpen: boolean;
+  rosterTab: RosterTab;
+  toggleRoster: () => void;
+  setRosterTab: (tab: RosterTab) => void;
   openSetup: () => void;
   onlineMode: OnlineMode;
   /** `code` pre-fills the field when arriving from a shared link. */
@@ -85,7 +107,8 @@ interface Store {
   startGame: (defs: { name: string; pawn: number }[], seed?: number) => void;
   /**
    * Takes on a game that was built elsewhere — the authoritative snapshot of
-   * an online room, either at kickoff or after a resync.
+   * an online room, either at kickoff or after a resync. A `null` seat is a
+   * spectator: they watch the same board and never act on it.
    */
   adoptGame: (game: GameState, localPlayerId: number | null) => void;
   /** Plays an action here and now. Online this is driven by the wire. */
@@ -97,6 +120,7 @@ interface Store {
   toggleManage: () => void;
   toggleTrade: () => void;
   toggleLog: () => void;
+  toggleChat: () => void;
   toggleSettings: () => void;
   updateSettings: (patch: Partial<Settings>) => void;
   askQuit: () => void;
@@ -139,7 +163,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function pushToast(text: string, tone: Toast["tone"]): void {
+/**
+ * Pins a paper slip in the corner. Exported because the network layer has
+ * things to say that the engine never will — somebody leaving the room, a
+ * connection coming back — and they belong in the same running commentary
+ * as everything else that happens at the table.
+ */
+export function pushToast(text: string, tone: Toast["tone"]): void {
   const t: Toast = { id: Date.now() + Math.random(), text, tone };
   useGame.setState((s) => ({ toasts: [...s.toasts, t] }));
   setTimeout(() => {
@@ -293,6 +323,13 @@ async function handleEvent(ev: GameEvent): Promise<void> {
 interface PersistedState {
   screen: Screen;
   game: GameState | null;
+  /**
+   * Kept across a reload because they say which game this is, not how it
+   * looks: a device that came back from an online room owning nobody would
+   * behave as a hot-seat game and let its player act for the whole table.
+   */
+  online: boolean;
+  localPlayerId: number | null;
   soundOn: boolean;
   settings: Settings;
 }
@@ -319,6 +356,7 @@ export const useGame = create<Store>()(
     (set, get) => ({
     screen: "home",
     game: null,
+    online: false,
     localPlayerId: null,
     visPos: {},
     dice: null,
@@ -336,6 +374,11 @@ export const useGame = create<Store>()(
     manageOpen: false,
     tradeOpen: false,
     logOpen: false,
+    chatOpen: false,
+    rosterOpen: true,
+    rosterTab: "players",
+    toggleRoster: () => set((s) => ({ rosterOpen: !s.rosterOpen })),
+    setRosterTab: (rosterTab) => set({ rosterTab }),
     openSetup: () => set({ screen: "setup" }),
     onlineMode: "create",
     pendingCode: "",
@@ -351,6 +394,8 @@ export const useGame = create<Store>()(
       set({
         screen: "home",
         game: null,
+        online: false,
+        localPlayerId: null,
         visPos: {},
         dice: null,
         diceThrow: null,
@@ -363,6 +408,9 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        chatOpen: false,
+        rosterOpen: true,
+        rosterTab: "players",
         rainKey: 0,
       });
     },
@@ -377,6 +425,8 @@ export const useGame = create<Store>()(
       set({
         screen: "game",
         game,
+        online: false,
+        localPlayerId: null,
         visPos,
         dice: null,
         diceThrow: null,
@@ -389,6 +439,9 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        chatOpen: false,
+        rosterOpen: true,
+        rosterTab: "players",
         rainKey: 0,
       });
     },
@@ -402,6 +455,7 @@ export const useGame = create<Store>()(
       set({
         screen: game.phase === "game-over" ? "over" : "game",
         game,
+        online: true,
         localPlayerId,
         visPos,
         dice: null,
@@ -417,6 +471,9 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        chatOpen: false,
+        rosterOpen: true,
+        rosterTab: "players",
         rainKey: 0,
       });
     },
@@ -440,6 +497,14 @@ export const useGame = create<Store>()(
       }
     },
     dispatch: (action) => {
+      // A spectator has a relay like everyone else, and anything they sent
+      // would be replayed by the whole room. The HUD gives them no buttons,
+      // so reaching here means something slipped through rather than that
+      // they meant it.
+      if (get().online && get().localPlayerId === null) {
+        pushToast("Vous suivez la partie en spectateur", "info");
+        return;
+      }
       // Online, an action is not applied where it is played: it goes out on
       // the wire and every client — this one included — applies it when it
       // comes back, so all devices replay the same sequence in the same
@@ -463,6 +528,7 @@ export const useGame = create<Store>()(
     toggleManage: () => set((s) => ({ manageOpen: !s.manageOpen })),
     toggleTrade: () => set((s) => ({ tradeOpen: !s.tradeOpen })),
     toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
+    toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   askQuit: () => set({ confirmQuitOpen: true }),
   cancelQuit: () => set({ confirmQuitOpen: false }),
@@ -474,12 +540,24 @@ export const useGame = create<Store>()(
     }),
     {
       name: "dakaropoly/save",
-      version: 1,
+      version: 2,
+      // A save written before offers could sit on the table has no
+      // `pendingTrade`. Filling it in beats dropping an evening's game,
+      // which is what a bare version bump would do.
+      migrate: (persisted, from) => {
+        const saved = persisted as PersistedState;
+        if (from < 2 && saved.game && saved.game.pendingTrade === undefined) {
+          saved.game.pendingTrade = null;
+        }
+        return saved;
+      },
       // A Monopoly evening is long: only the board state is worth keeping.
       // Anything mid-animation is transient and is rebuilt on rehydrate.
       partialize: (s): PersistedState => ({
         screen: s.screen,
         game: s.game,
+        online: s.online,
+        localPlayerId: s.localPlayerId,
         soundOn: s.soundOn,
         settings: s.settings,
       }),

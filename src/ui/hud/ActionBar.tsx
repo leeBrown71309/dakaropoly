@@ -1,12 +1,15 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
+import { useRoom } from "../../net/roomStore";
+import { useVoice } from "../../net/voice";
 import { useCompact } from "../useViewport";
-import { useIsMyTurn, useIsOnline, useWaitingFor } from "../useTurn";
+import { useIsMyTurn, useIsOnline, useIsSpectator, useWaitingFor } from "../useTurn";
 import { cameraRig } from "../../three/cameraRig";
 import { Rail, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
 import { PlayerMark } from "../icons/PlayerMark";
+import { ChatPanel } from "./ChatPanel";
 
 /** Pip positions on a 3×3 grid, row-major. */
 const PIPS: Record<number, number[]> = {
@@ -45,6 +48,16 @@ export function ActionBar() {
   const game = useGame((s) => s.game);
   const dispatch = useGame((s) => s.dispatch);
   const toggleLog = useGame((s) => s.toggleLog);
+  const toggleChat = useGame((s) => s.toggleChat);
+  const chatOpen = useGame((s) => s.chatOpen);
+  const unread = useRoom((s) => s.unread);
+  const voiceActive = useVoice((s) => s.active);
+  const voiceMuted = useVoice((s) => s.muted);
+  const voiceBusy = useVoice((s) => s.busy);
+  const startVoice = useVoice((s) => s.start);
+  const toggleMute = useVoice((s) => s.toggleMute);
+  const spectatorVoice = useRoom((s) => s.spectatorVoice);
+  const spectating = useIsSpectator();
   const toggleManage = useGame((s) => s.toggleManage);
   const toggleTrade = useGame((s) => s.toggleTrade);
   const toggleSettings = useGame((s) => s.toggleSettings);
@@ -84,6 +97,10 @@ export function ActionBar() {
               : "Dette à régler"
             : "Résolution";
 
+  // A spectator only gets a microphone if the host has opened it: a room
+  // holds any number of them, and a dozen talking at once buries the game.
+  const micAllowed = !spectating || spectatorVoice;
+
   const primarySize = compact ? "md" : "lg";
   const secondarySize = compact ? "sm" : "md";
   const waiting = (
@@ -100,6 +117,7 @@ export function ActionBar() {
   return (
     <>
       {logOpen && <LogReceipt compact={compact} />}
+      {online && <ChatPanel />}
 
       <Rail
         className={`pointer-events-auto absolute bottom-0 left-1/2 z-30 flex max-w-full -translate-x-1/2 items-center rounded-b-none ${
@@ -206,12 +224,42 @@ export function ActionBar() {
           <Fitting icon="deed" label="Patrimoine" active={manageOpen} onClick={toggleManage} />
           <Fitting
             icon="exchange"
-            label={online ? "Échanges : bientôt en ligne" : "Échanger"}
+            label="Échanger"
             active={tradeOpen}
-            disabled={online}
+            disabled={!myTurn || Boolean(game.pendingTrade)}
             onClick={toggleTrade}
           />
           <Fitting icon="receipt" label="Journal" active={logOpen} onClick={toggleLog} />
+          {online && (
+            <Fitting
+              icon={(voiceActive && voiceMuted) || !micAllowed ? "micOff" : "mic"}
+              label={
+                !micAllowed
+                  ? "Micro réservé aux joueurs"
+                  : !voiceActive
+                    ? "Activer le micro"
+                    : voiceMuted
+                      ? "Reprendre le micro"
+                      : "Couper le micro"
+              }
+              active={voiceActive && !voiceMuted}
+              disabled={voiceBusy || !micAllowed}
+              onClick={() => (voiceActive ? toggleMute() : void startVoice())}
+            />
+          )}
+          {online && (
+            <span className="relative">
+              <Fitting icon="chat" label="Discussion" active={chatOpen} onClick={toggleChat} />
+              {unread > 0 && !chatOpen && (
+                <span
+                  className="u-label pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px]"
+                  style={{ backgroundColor: "#C2643C", color: "#FBEDEB" }}
+                >
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </span>
+          )}
           {/* On a phone the camera buttons fold into the rail: pinching already
               zooms, so only the recentre is worth its own corner. */}
           {compact && <Fitting icon="recenter" label="Recadrer le plateau" onClick={() => cameraRig.reset()} />}

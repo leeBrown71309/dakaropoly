@@ -234,10 +234,13 @@ describe("moteur Dakaropoly", () => {
     s = forceTile(s, 1, { owner: 0 });
     s = forceTile(s, 5, { owner: 1 });
     s = { ...s, phase: "post-roll" };
-    const traded = applyAction(s, {
-      t: "propose-trade",
+    const offered = applyAction(s, {
+      t: "offer-trade",
       offer: { to: 1, giveMoney: 100, giveProps: [1], takeMoney: 50, takeProps: [5] },
     });
+    // Nothing moves until the other side says yes.
+    expect(offered.state.tiles[1]?.owner).toBe(0);
+    const traded = applyAction(offered.state, { t: "accept-trade" });
     expect(traded.state.tiles[1]?.owner).toBe(1);
     expect(traded.state.tiles[5]?.owner).toBe(0);
     expect(p(traded.state, 0).money).toBe(START_MONEY - 50);
