@@ -279,14 +279,29 @@ function walkAndResolve(s: GameState, events: GameEvent[], player: Player, steps
   if (s.phase === "resolving") finishResolution(s, events);
 }
 
-function moveTo(s: GameState, events: GameEvent[], player: Player, pos: number, rollSum: number): void {
+/**
+ * Walks a token forward to a tile, the way a hand moves it around the board.
+ *
+ * A card that says "advance to" means exactly that: the token travels, and
+ * collects the salary if it goes past the Départ on the way. Snapping it
+ * there instead left the player with no idea it had moved at all — the piece
+ * was simply somewhere else the next time they looked.
+ */
+function walkTo(events: GameEvent[], player: Player, pos: number): void {
+  const steps = (pos - player.position + 40) % 40;
+  if (steps > 0) events.push({ t: "move-steps", player: player.id, steps });
+  // Walking forward past the Départ is the same condition as landing on a
+  // lower-numbered tile, since the only way there is round the corner.
   if (pos < player.position) {
     player.money += SALARY;
     events.push({ t: "money", player: player.id, amount: SALARY });
     events.push({ t: "toast", text: `${player.name} passe par le Départ (+200 F)`, tone: "good" });
   }
   player.position = pos;
-  events.push({ t: "teleport", player: player.id, pos });
+}
+
+function moveTo(s: GameState, events: GameEvent[], player: Player, pos: number, rollSum: number): void {
+  walkTo(events, player, pos);
   resolveTile(s, events, rollSum);
 }
 
@@ -577,8 +592,9 @@ function applyCardEffect(s: GameState, events: GameEvent[], cardId: string): voi
     }
     case "nearest-station": {
       const target = nextOfKind(player.position, STATION_POS);
-      player.position = target;
-      events.push({ t: "teleport", player: player.id, pos: target });
+      // Walks there, and collects the salary if the nearest one is round past
+      // the Départ — which it never did before.
+      walkTo(events, player, target);
       const st = s.tiles[target] as TileState;
       if (st.owner === null) {
         s.buyTile = target;
@@ -605,8 +621,9 @@ function applyCardEffect(s: GameState, events: GameEvent[], cardId: string): voi
     }
     case "nearest-utility": {
       const target = nextOfKind(player.position, UTILITY_POS);
-      player.position = target;
-      events.push({ t: "teleport", player: player.id, pos: target });
+      // Walks there, and collects the salary if the nearest one is round past
+      // the Départ — which it never did before.
+      walkTo(events, player, target);
       const st = s.tiles[target] as TileState;
       if (st.owner === null) {
         s.buyTile = target;

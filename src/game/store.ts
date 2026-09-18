@@ -110,6 +110,9 @@ const ANNOUNCE_SOUND: Record<AnnounceKind, SoundName> = {
   bankruptcy: "bankrupt",
 };
 
+/** Longest a single walk may take, however far the card sends the token. */
+const WALK_BUDGET = 1800;
+
 let queue: GameEvent[] = [];
 let pumping = false;
 
@@ -124,6 +127,14 @@ let relay: ActionRelay | null = null;
 
 export function setActionRelay(next: ActionRelay | null): void {
   relay = next;
+}
+
+// Reaching the store from the browser console, in development only. The
+// animation queue is the hardest part of this app to reason about from the
+// outside, and being able to read `visPos` against `animating` while a turn
+// plays is worth the four lines.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __dakaropoly?: unknown }).__dakaropoly = () => useGame.getState();
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -175,12 +186,17 @@ async function handleEvent(ev: GameEvent): Promise<void> {
     }
     case "move-steps": {
       const sign = Math.sign(ev.steps);
-      for (let i = 0; i < Math.abs(ev.steps); i++) {
+      const steps = Math.abs(ev.steps);
+      for (let i = 0; i < steps; i++) {
         const st = useGame.getState();
         const cur = st.visPos[ev.player] ?? 0;
         useGame.setState({ visPos: { ...st.visPos, [ev.player]: (cur + sign + 40) % 40 } });
         sfx.play("step");
-        await sleep(useGame.getState().settings.stepDuration);
+        // A card can send a token most of the way round the board, which at
+        // the ordinary pace would be seven seconds of hopping. Long moves
+        // scamper instead, so the whole journey stays watchable.
+        const pace = useGame.getState().settings.stepDuration;
+        await sleep(Math.min(pace, Math.max(45, WALK_BUDGET / steps)));
       }
       return;
     }
