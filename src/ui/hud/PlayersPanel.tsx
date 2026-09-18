@@ -6,8 +6,8 @@ import { ownedPositions } from "../../game/selectors";
 import type { GameState, Player } from "../../game/types";
 import { Card } from "../kit/Surface";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
 
 interface GroupHolding {
   group: string;
@@ -76,9 +76,7 @@ export function PlayersPanel() {
                 }}
               />
 
-              <span style={{ color: p.color }} className="shrink-0">
-                <PawnGlyph pawn={p.pawn} size={compact ? 17 : 26} />
-              </span>
+              <PlayerMark player={p} size={compact ? 17 : 26} />
 
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">

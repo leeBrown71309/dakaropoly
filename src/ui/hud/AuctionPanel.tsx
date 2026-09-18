@@ -1,13 +1,14 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn } from "../useTurn";
 import { decisionAnchor } from "./anchor";
 import { TitleDeed } from "../kit/TitleDeed";
 import { Button } from "../kit/Button";
 import { Money } from "../kit/Money";
 import { Label } from "../kit/Surface";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
 
 const RAISES = [10, 50, 100];
 
@@ -18,6 +19,7 @@ export function AuctionPanel() {
   // the token it describes.
   const animating = useGame((s) => s.animating);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
   if (animating || !game || game.phase !== "auction" || !game.auction) return null;
 
   const auction = game.auction;
@@ -51,9 +53,7 @@ export function AuctionPanel() {
         <Label>Meilleure offre</Label>
         {leader ? (
           <span className="flex items-center gap-2">
-            <span style={{ color: leader.color }}>
-              <PawnGlyph pawn={leader.pawn} size={compact ? 15 : 18} />
-            </span>
+            <PlayerMark player={leader} size={compact ? 15 : 18} />
             <span className={`font-bold text-ink-700 ${compact ? "text-[11px]" : "text-[12px]"}`}>
               {leader.name}
             </span>
@@ -69,12 +69,10 @@ export function AuctionPanel() {
         )}
       </div>
 
-      {bidder ? (
+      {bidder && myTurn ? (
         <>
           <div className={`flex items-center gap-2 px-0.5 ${compact ? "mt-1.5" : "mt-2"}`}>
-            <span style={{ color: bidder.color }}>
-              <PawnGlyph pawn={bidder.pawn} size={compact ? 16 : 20} />
-            </span>
+            <PlayerMark player={bidder} size={compact ? 16 : 20} />
             <span className={`font-bold text-sand-100 ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
               {compact ? bidder.name : `À ${bidder.name} d'enchérir`}
             </span>
@@ -114,6 +112,10 @@ export function AuctionPanel() {
             Se retirer
           </Button>
         </>
+      ) : bidder ? (
+        <p className="mt-2 text-center text-[12px] font-semibold text-sand-300">
+          {bidder.name} enchérit…
+        </p>
       ) : (
         <p className="mt-2 text-center text-[12px] font-semibold text-sand-300">Adjudication…</p>
       )}

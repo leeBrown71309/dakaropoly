@@ -125,3 +125,18 @@ export function netWorthOf(s: GameState, player: Player): number {
 export function ownedPositions(s: GameState, playerId: number): number[] {
   return BOARD.map((_, pos) => pos).filter((pos) => s.tiles[pos]?.owner === playerId);
 }
+
+/**
+ * The one player entitled to act right now, or `null` when the game is over.
+ *
+ * It is *not* always `s.current`: during an auction the floor belongs to the
+ * head of the rotating bidding queue, and everyone else — the player whose
+ * turn it nominally is included — must wait. Online, this is what decides
+ * whose device shows buttons, so every gate reads it rather than comparing
+ * against `current` by hand.
+ */
+export function actorFor(s: GameState): number | null {
+  if (s.phase === "game-over") return null;
+  if (s.phase === "auction" && s.auction) return s.auction.order[0] ?? null;
+  return s.current;
+}

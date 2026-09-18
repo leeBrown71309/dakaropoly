@@ -1,11 +1,12 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn, useIsOnline, useWaitingFor } from "../useTurn";
 import { cameraRig } from "../../three/cameraRig";
 import { Rail, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
+import { PlayerMark } from "../icons/PlayerMark";
 
 /** Pip positions on a 3×3 grid, row-major. */
 const PIPS: Record<number, number[]> = {
@@ -53,6 +54,9 @@ export function ActionBar() {
   const settingsOpen = useGame((s) => s.settingsOpen);
   const animating = useGame((s) => s.animating);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
+  const online = useIsOnline();
+  const waitingForName = useWaitingFor();
 
   if (!game || game.phase === "game-over") return null;
   const player = game.players[game.current];
@@ -62,21 +66,23 @@ export function ActionBar() {
   const blocked = busy || game.phase === "buy-decision" || game.phase === "auction" || game.phase === "debt";
   // While the queue is playing the rules have already moved on, but the board
   // has not — so the rail waits too rather than offering the next action.
-  const waitingFor = animating
-    ? "En cours"
-    : game.phase === "buy-decision"
-      ? compact
-        ? "Achat"
-        : "Décision d'achat"
-      : game.phase === "auction"
+  const waitingFor = waitingForName
+    ? `Au tour de ${waitingForName}`
+    : animating
+      ? "En cours"
+      : game.phase === "buy-decision"
         ? compact
-          ? "Enchères"
-          : "Enchères en cours"
-        : game.phase === "debt"
+          ? "Achat"
+          : "Décision d'achat"
+        : game.phase === "auction"
           ? compact
-            ? "Dette"
-            : "Dette à régler"
-          : "Résolution";
+            ? "Enchères"
+            : "Enchères en cours"
+          : game.phase === "debt"
+            ? compact
+              ? "Dette"
+              : "Dette à régler"
+            : "Résolution";
 
   const primarySize = compact ? "md" : "lg";
   const secondarySize = compact ? "sm" : "md";
@@ -112,9 +118,7 @@ export function ActionBar() {
             boxShadow: "inset 0 2px 5px rgba(78,56,28,.35), 0 1px 0 rgba(255,225,180,.16)",
           }}
         >
-          <span style={{ color: player.color }} className="shrink-0">
-            <PawnGlyph pawn={player.pawn} size={compact ? 19 : 26} />
-          </span>
+          <PlayerMark player={player} size={compact ? 19 : 26} />
           <div className="min-w-0 leading-tight">
             <div
               className={`u-display truncate text-ink-900 ${compact ? "max-w-[92px] text-[11.5px]" : "text-[14px]"}`}
@@ -138,7 +142,7 @@ export function ActionBar() {
 
         {/* Primary action for the current phase */}
         <div className={`flex items-center ${compact ? "gap-1" : "gap-2"}`}>
-          {animating ? (
+          {animating || !myTurn ? (
             waiting
           ) : game.phase === "turn-start" && player.inJail ? (
             <>
@@ -200,7 +204,13 @@ export function ActionBar() {
           className={`flex items-center border-l border-black/30 ${compact ? "gap-1 pl-1.5" : "gap-1.5 pl-3"}`}
         >
           <Fitting icon="deed" label="Patrimoine" active={manageOpen} onClick={toggleManage} />
-          <Fitting icon="exchange" label="Échanger" active={tradeOpen} onClick={toggleTrade} />
+          <Fitting
+            icon="exchange"
+            label={online ? "Échanges : bientôt en ligne" : "Échanger"}
+            active={tradeOpen}
+            disabled={online}
+            onClick={toggleTrade}
+          />
           <Fitting icon="receipt" label="Journal" active={logOpen} onClick={toggleLog} />
           {/* On a phone the camera buttons fold into the rail: pinching already
               zooms, so only the recentre is worth its own corner. */}

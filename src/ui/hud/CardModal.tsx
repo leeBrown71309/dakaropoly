@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn } from "../useTurn";
 import { Button } from "../kit/Button";
 import { BrassRule } from "../kit/Surface";
 import { Icon } from "../icons/Icon";
@@ -26,6 +27,7 @@ export function CardModal() {
   const cardView = useGame((s) => s.cardView);
   const ackCard = useGame((s) => s.ackCard);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
 
   return (
     <AnimatePresence>
@@ -52,6 +54,7 @@ export function CardModal() {
               title={cardView.card.title}
               text={cardView.card.text}
               compact={compact}
+              canAck={myTurn}
               onAck={ackCard}
             />
           </motion.div>
@@ -66,12 +69,14 @@ function Deck({
   title,
   text,
   compact,
+  canAck,
   onAck,
 }: {
   deck: "chance" | "chest";
   title: string;
   text: string;
   compact: boolean;
+  canAck: boolean;
   onAck: () => void;
 }) {
   const s = DECK_STYLE[deck];
@@ -123,9 +128,10 @@ function Deck({
           size={compact ? "sm" : "md"}
           block
           className={compact ? "mt-3" : "mt-5"}
+          disabled={!canAck}
           onClick={onAck}
         >
-          C'est noté
+          {canAck ? "C'est noté" : "En attente…"}
         </Button>
       </div>
     </div>
