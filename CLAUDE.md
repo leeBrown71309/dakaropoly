@@ -70,6 +70,15 @@ Adding an event: extend `GameEvent` in `types.ts` **and** add a `case` in `handl
 - **The board is printed, not assembled.** `boardTexture.ts` draws the whole playing surface — tile fields, colour bands, names, prices, icons, corners, centre wordmark — into one 2048² canvas mapped over a single box. Only state-dependent things (owner marks, houses, mortgage marks, decks) are meshes, in `BoardMesh.tsx`. Text is drawn **upright on all four sides** on purpose (one screen, one seat); do not reintroduce per-side rotation.
 - **Tokens are extruded from their own HUD glyph.** `PAWN_SILHOUETTES` in `game/data/pawns.ts` holds one set of path data, rendered flat by `ui/icons/PawnGlyph.tsx` and extruded with a bevel by `PawnMesh.tsx`. Change the path once and both follow.
 - Icons shared between the HUD and the printed board live as path strings in `ui/icons/paths.ts`, consumed as SVG by `Icon.tsx` and as `Path2D` by `boardTexture.ts`.
+- **`DECK_STYLES` in `game/colors.ts` owns both event decks.** Baraka is
+  orange and Teranga blue, and that has to hold in three places at once: the
+  printed square, the pile in the middle of the board, and the card that comes
+  off it. A player landing on one should know which deck they are drawing from
+  by the colour under their token. Teranga used to be printed on cream — the
+  colour of the board itself — so its squares vanished among the properties;
+  both squares are now a field of colour rather than an icon on bare paper. A
+  stripe along one edge would have been wrong: that is what a colour *group*
+  looks like here, and these are not properties.
 - `src/ui/kit/` holds the shared primitives (`Button`, `Surface`, `Money`, `TitleDeed`); build new panels from these rather than restyling divs.
 - **Zero external assets** beyond the two self-hosted webfonts (`@fontsource-variable/*`): every board mark, deck face and die face is canvas-drawn, every sound is synthesized WebAudio in `src/audio/sounds.ts`. Do not add image or audio files.
 - Tailwind v4 via `@tailwindcss/vite` — no `tailwind.config`; tokens live in the `@theme` block of `src/index.css`.
