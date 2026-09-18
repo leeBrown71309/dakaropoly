@@ -131,10 +131,22 @@ A room is a code, a Supabase Realtime channel and one row holding the state.
 - **Identity is per tab** (`sessionStorage`), not per browser. Two tabs of one
   browser sharing an id meant the second player silently took over the first
   one's seat — and two tabs is how anyone tries this before a real game.
-- Anonymous sign-ins may be switched off on a Supabase project. When they are,
-  `ensureSession` generates the id locally and the `anon` policies apply: the
-  game still works, but seat ownership is a convention rather than a rule.
-  Trades are **disabled online** until they become propose-then-accept: the
+- **The tables cannot be read at all.** Rooms and rosters are reachable only
+  through `get_room(code)`, and writes only through `create_room`,
+  `claim_seat`, `open_room` and `advance_room`. Those functions are
+  `SECURITY DEFINER`, take the caller's identity from `auth.uid()` rather than
+  from the request body, and require a session. So the room code is a real key
+  — there is no way to list other people's games — and passing somebody else's
+  client id gets you nowhere.
+- Anonymous sign-in is **required**; `ensureSession` fails with a message
+  naming the setting rather than letting the game die on an SQL error later.
+- A policy that subqueries another table is a trap here: `rooms_update` tested
+  membership by reading `room_players`, which is denied, so kicking off a game
+  updated nothing and reported no error. Keep authorisation inside the
+  functions, where it can be read in one place.
+- Creating a room sweeps rooms untouched for 24 hours, so finished games do
+  not accumulate. There is no scheduler to maintain.
+- Trades are **disabled online** until they become propose-then-accept: the
   engine still executes an offer on the spot, with no consent from the other
   side.
 

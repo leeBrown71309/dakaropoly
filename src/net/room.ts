@@ -86,28 +86,36 @@ const toSeat = (r: RawSeat): Seat => ({
   avatar: r.avatar,
 });
 
-export async function fetchRoom(code: string): Promise<RoomRow | null> {
-  const { data, error } = await supabase().from("rooms").select("*").eq("code", code).maybeSingle();
+/**
+ * Rooms cannot be read from the table directly — only through this function,
+ * which demands the code. That is what keeps the code a real key: without it
+ * there is no way to discover, let alone join, somebody else's game.
+ */
+async function loadRoom(code: string): Promise<(RawRoom & { seats: RawSeat[] }) | null> {
+  const { data, error } = await supabase().rpc("get_room", { p_code: code });
   if (error) throw new Error(error.message);
-  return data ? toRoom(data as RawRoom) : null;
+  return (data as (RawRoom & { seats: RawSeat[] }) | null) ?? null;
+}
+
+export async function fetchRoom(code: string): Promise<RoomRow | null> {
+  const raw = await loadRoom(code);
+  return raw ? toRoom(raw) : null;
 }
 
 export async function fetchSeats(code: string): Promise<Seat[]> {
-  const { data, error } = await supabase()
-    .from("room_players")
-    .select("*")
-    .eq("room_code", code)
-    .order("joined_at", { ascending: true });
-  if (error) throw new Error(error.message);
-  return (data as RawSeat[] | null)?.map(toSeat) ?? [];
+  const raw = await loadRoom(code);
+  return raw?.seats?.map(toSeat) ?? [];
 }
 
-/** Creates a room and seats its host first, so seat 0 is always the host. */
+/**
+ * Creates a room and seats its host. Creating one also sweeps rooms nobody
+ * has touched in a day, so finished games do not pile up for ever.
+ */
 export async function createRoom(clientId: string, name: string, pawn: number): Promise<string> {
   const sb = supabase();
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = makeCode();
-    const { error } = await sb.from("rooms").insert({ code, host_id: clientId });
+    const { error } = await sb.rpc("create_room", { p_code: code });
     if (error) {
       // 23505 is a duplicate key: astronomically unlikely, but cheap to retry.
       if (error.code === "23505") continue;
@@ -134,15 +142,15 @@ export async function claimSeat(
   name: string,
   pawn: number | null,
 ): Promise<void> {
-  const seat = pawn;
-  const { error } = await supabase()
-    .from("room_players")
-    .upsert(
-      { room_code: code, client_id: clientId, seat, name, pawn, avatar: null },
-      { onConflict: "room_code,client_id" },
-    );
+  const { error } = await supabase().rpc("claim_seat", {
+    p_code: code,
+    p_client_id: clientId,
+    p_name: name,
+    p_pawn: pawn,
+  });
   if (error) {
     if (error.code === "23505") throw new Error("Ce pion est déjà pris");
+    if (error.code === "P0002") throw new Error("Aucun salon avec ce code");
     throw new Error(error.message);
   }
 }
@@ -171,17 +179,12 @@ export async function startRoom(
   state: GameState,
   seatOrder: string[],
 ): Promise<void> {
-  const { error } = await supabase()
-    .from("rooms")
-    .update({
-      status: "playing",
-      seed,
-      state,
-      version: 1,
-      seat_order: seatOrder,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("code", code);
+  const { error } = await supabase().rpc("open_room", {
+    p_code: code,
+    p_seed: seed,
+    p_state: state,
+    p_seat_order: seatOrder,
+  });
   if (error) throw new Error(error.message);
 }
 
@@ -200,17 +203,11 @@ export async function pushSnapshot(
   state: GameState,
   fromVersion: number,
 ): Promise<boolean> {
-  const { data, error } = await supabase()
-    .from("rooms")
-    .update({
-      state,
-      version: fromVersion + 1,
-      status: state.phase === "game-over" ? "over" : "playing",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("code", code)
-    .eq("version", fromVersion)
-    .select("version");
+  const { data, error } = await supabase().rpc("advance_room", {
+    p_code: code,
+    p_state: state,
+    p_from: fromVersion,
+  });
   if (error) throw new Error(error.message);
-  return (data?.length ?? 0) > 0;
+  return data === true;
 }

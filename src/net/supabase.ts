@@ -7,8 +7,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * checks before offering to play over the network.
  *
  * The key is published with the site on purpose. It grants nothing on its
- * own: every table is behind row level security, so what a visitor can read
- * or write is decided by the policies, not by holding the key.
+ * own: rooms cannot be read from the table at all, only through functions
+ * that demand the room code, so the code is the real key.
  */
 const URL = import.meta.env.VITE_SUPABASE_URL;
 const KEY = import.meta.env.VITE_SUPABASE_KEY;
@@ -24,7 +24,20 @@ export function supabase(): SupabaseClient {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
-        // Per tab, not per browser — see `localId` below for why.
+        /*
+         * Per tab, not per browser.
+         *
+         * Local storage is shared by every tab of the same browser, so two
+         * windows opened side by side would be the *same* player and the
+         * second would silently take over the first one's seat. That is not
+         * only a testing nuisance: two tabs is how anyone tries this out
+         * before a real game. Session storage survives a reload, which is
+         * what a player needs, and gives each tab its own identity, which is
+         * what a tester needs.
+         *
+         * The cost is that closing a tab loses the seat until reclaiming one
+         * is built.
+         */
         storage: sessionStorage,
       },
       realtime: { params: { eventsPerSecond: 20 } },
@@ -33,61 +46,25 @@ export function supabase(): SupabaseClient {
   return client;
 }
 
-const LOCAL_ID_KEY = "dakaropoly/client";
-
-/** Whether the last session came from Supabase auth rather than the fallback. */
-export let seatsAreEnforced = false;
-
 /**
- * A player id that belongs to the tab rather than to the browser.
+ * Establishes an identity for this device, signing in anonymously if needed.
  *
- * Local storage would be shared by every tab of the same browser, so two
- * windows opened side by side would be the *same* player — the second would
- * silently take over the first one's seat. That is not just a testing
- * inconvenience: it is the only way anyone tries this out before a real game.
- * Session storage survives a reload, which is what a player actually needs,
- * and gives each tab its own identity, which is what a tester needs.
- *
- * The cost is that closing the tab loses the seat. Reclaiming an abandoned
- * seat is part of the reconnection work, not of this step.
- */
-function localId(): string {
-  let id = sessionStorage.getItem(LOCAL_ID_KEY);
-  if (!id) {
-    id = crypto.randomUUID();
-    sessionStorage.setItem(LOCAL_ID_KEY, id);
-  }
-  return id;
-}
-
-/**
- * Establishes a stable id for this device.
- *
- * This is not a login — nobody types anything. It exists so the database can
- * tell one device from another and refuse to let someone edit a seat that is
- * not theirs. The session is kept in local storage, so reopening the page
- * comes back as the same player.
- *
- * Anonymous sign-ins are a project setting that may be off, and a game among
- * friends should not fall over because of a switch in a dashboard. When they
- * are unavailable the id is generated here instead and seat ownership becomes
- * a convention rather than a rule — everything still works, and turning the
- * setting on upgrades it with no code change.
+ * Nobody types anything — this is not a login. It exists so the database can
+ * tell one device from another and refuse to let anyone edit a seat that is
+ * not theirs.
  */
 export async function ensureSession(): Promise<string> {
   const sb = supabase();
   const { data } = await sb.auth.getSession();
-  if (data.session?.user.id) {
-    seatsAreEnforced = true;
-    return data.session.user.id;
-  }
+  if (data.session?.user.id) return data.session.user.id;
 
   const { data: signed, error } = await sb.auth.signInAnonymously();
-  if (!error && signed.user) {
-    seatsAreEnforced = true;
-    return signed.user.id;
-  }
+  if (!error && signed.user) return signed.user.id;
 
-  seatsAreEnforced = false;
-  return localId();
+  // Without an identity there is no way to tell players apart, and every
+  // write would be refused. Failing here with the reason beats failing later
+  // with a row level security error nobody can interpret.
+  throw new Error(
+    "Connexion impossible. Activez « Anonymous Sign-Ins » dans le projet Supabase (Authentication → Providers).",
+  );
 }
