@@ -9,8 +9,8 @@ import type { Player } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
 
 /** A property chip that can be laid on the table as part of an offer. */
 function PropChip({
@@ -67,9 +67,7 @@ function OfferColumn({
   return (
     <div className="flex min-h-0 flex-col">
       <div className="mb-1.5 flex items-center gap-2">
-        <span style={{ color: owner.color }}>
-          <PawnGlyph pawn={owner.pawn} size={compact ? 16 : 20} />
-        </span>
+        <PlayerMark player={owner} size={compact ? 16 : 20} />
         <span className={`u-display text-ink-900 ${compact ? "text-[12px]" : "text-[13.5px]"}`}>
           {owner.name}
         </span>
@@ -198,9 +196,7 @@ export function TradeModal() {
                             boxShadow: "inset 0 0 0 1px rgba(110,86,52,.22)",
                           }}
                         >
-                          <span style={{ color: p.color }}>
-                            <PawnGlyph pawn={p.pawn} size={compact ? 18 : 24} />
-                          </span>
+                          <PlayerMark player={p} size={compact ? 18 : 24} />
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-bold text-ink-900">{p.name}</span>
                             <Money amount={p.money} className="text-[11.5px] text-ink-500" />
@@ -313,9 +309,7 @@ function Summary({
       style={{ background: "rgba(120,95,60,.07)", boxShadow: "inset 0 0 0 1px rgba(110,86,52,.2)" }}
     >
       <div className="mb-1.5 flex items-center gap-2">
-        <span style={{ color: owner.color }}>
-          <PawnGlyph pawn={owner.pawn} size={18} />
-        </span>
+        <PlayerMark player={owner} size={18} />
         <span className="text-[12.5px] font-bold text-ink-900">{owner.name}</span>
         <Label className="ml-auto">{caption}</Label>
       </div>

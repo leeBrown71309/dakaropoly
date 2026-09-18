@@ -6,8 +6,8 @@ import type { GameState } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon, type IconName } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
 
 interface AwardDef {
   icon: IconName;
@@ -141,9 +141,7 @@ export function GameOver() {
                       >
                         {i + 1}
                       </span>
-                      <span style={{ color: p.color }} className="shrink-0">
-                        <PawnGlyph pawn={p.pawn} size={compact ? 18 : 22} />
-                      </span>
+                      <PlayerMark player={p} size={compact ? 18 : 22} />
                       <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-ink-900">
                         {p.name}
                         {p.bankrupt && <span className="ml-2 u-label text-clay-700">Faillite</span>}

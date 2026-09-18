@@ -2,8 +2,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
 
 /**
  * A shop sign bolted to the top edge of the screen. It swings down into
@@ -42,9 +42,7 @@ export function TurnBanner() {
             </>
           )}
 
-          <span style={{ color: player.color }}>
-            <PawnGlyph pawn={player.pawn} size={compact ? 17 : 24} />
-          </span>
+          <PlayerMark player={player} size={compact ? 17 : 24} />
           <span
             className={`u-display leading-none text-sand-100 ${compact ? "text-[12px]" : "text-[16px]"}`}
           >

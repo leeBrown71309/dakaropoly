@@ -43,6 +43,12 @@ export interface Announcement {
 interface Store {
   screen: Screen;
   game: GameState | null;
+  /**
+   * Which seat this device speaks for, or `null` in a hot-seat game where it
+   * speaks for whoever's turn it is. Online it is the player's own seat, and
+   * every interactive control is gated against it.
+   */
+  localPlayerId: number | null;
   visPos: Record<number, number>;
   dice: { a: number; b: number; rolling: boolean } | null;
   /** Recorded physics for the throw in flight, replayed by the 3D dice. */
@@ -68,7 +74,8 @@ interface Store {
   logOpen: boolean;
   openSetup: () => void;
   goHome: () => void;
-  startGame: (defs: { name: string; pawn: number }[]) => void;
+  /** `seed` is supplied online so every client builds the same board. */
+  startGame: (defs: { name: string; pawn: number }[], seed?: number) => void;
   dispatch: (action: Action) => void;
   ackCard: () => void;
   toggleSound: () => void;
@@ -268,6 +275,7 @@ export const useGame = create<Store>()(
     (set, get) => ({
     screen: "home",
     game: null,
+    localPlayerId: null,
     visPos: {},
     dice: null,
     diceThrow: null,
@@ -287,6 +295,11 @@ export const useGame = create<Store>()(
     openSetup: () => set({ screen: "setup" }),
     goHome: () => {
       queue = [];
+      // Leaving while a card is on the table would strand the pump on a
+      // promise nobody is left to settle, and `pumping` would stay true for
+      // the rest of the session — every later game silently refusing to
+      // animate. Release it before dropping the reference.
+      get().cardResolve?.();
       set({
         screen: "home",
         game: null,
@@ -305,9 +318,12 @@ export const useGame = create<Store>()(
         rainKey: 0,
       });
     },
-    startGame: (defs) => {
+    startGame: (defs, seed) => {
       queue = [];
-      const game = createGame(defs);
+      get().cardResolve?.();
+      // The seed is drawn here rather than inside the engine: online, every
+      // client must build the identical board from a seed agreed in the lobby.
+      const game = createGame(defs, seed ?? Math.floor(Math.random() * 2147483647));
       const visPos: Record<number, number> = {};
       for (const p of game.players) visPos[p.id] = 0;
       set({

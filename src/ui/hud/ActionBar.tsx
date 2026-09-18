@@ -5,7 +5,7 @@ import { cameraRig } from "../../three/cameraRig";
 import { Rail, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
+import { PlayerMark } from "../icons/PlayerMark";
 
 /** Pip positions on a 3×3 grid, row-major. */
 const PIPS: Record<number, number[]> = {
@@ -112,9 +112,7 @@ export function ActionBar() {
             boxShadow: "inset 0 2px 5px rgba(78,56,28,.35), 0 1px 0 rgba(255,225,180,.16)",
           }}
         >
-          <span style={{ color: player.color }} className="shrink-0">
-            <PawnGlyph pawn={player.pawn} size={compact ? 19 : 26} />
-          </span>
+          <PlayerMark player={player} size={compact ? 19 : 26} />
           <div className="min-w-0 leading-tight">
             <div
               className={`u-display truncate text-ink-900 ${compact ? "max-w-[92px] text-[11.5px]" : "text-[14px]"}`}

@@ -103,9 +103,28 @@ function assertPhase(s: GameState, kind: PhaseKind): void {
   if (s.phase !== kind) throw new Error("Action impossible maintenant");
 }
 
+/** Spending your own way — building, lifting a mortgage. */
 function assertManageable(s: GameState): void {
   if (s.phase !== "turn-start" && s.phase !== "post-roll" && s.phase !== "buy-decision") {
     throw new Error("Gestion impossible maintenant");
+  }
+}
+
+/**
+ * Raising cash — selling buildings, mortgaging. Allowed everywhere managing
+ * is, **plus while in debt**: a player rich in streets but short of notes must
+ * be able to liquidate rather than being forced into a bankruptcy they could
+ * have paid their way out of.
+ */
+function assertRaiseFunds(s: GameState): void {
+  if (s.phase === "debt") return;
+  assertManageable(s);
+}
+
+/** Guards an untrusted board index, so it fails as a rule, not a TypeError. */
+function assertBoardPos(pos: number): void {
+  if (!Number.isInteger(pos) || pos < 0 || pos >= BOARD.length) {
+    throw new Error("Case inconnue");
   }
 }
 
@@ -452,6 +471,10 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
 
 function validateTrade(s: GameState, player: Player, offer: TradeOffer): void {
   if (offer.to === player.id) throw new Error("Échange avec soi-même ?");
+  if (!s.players[offer.to]) throw new Error("Joueur inconnu");
+  for (const pos of [...offer.giveProps, ...offer.takeProps]) assertBoardPos(pos);
+  if (!Number.isInteger(offer.giveMoney) || offer.giveMoney < 0) throw new Error("Somme invalide");
+  if (!Number.isInteger(offer.takeMoney) || offer.takeMoney < 0) throw new Error("Somme invalide");
   const target = s.players[offer.to] as Player;
   if (target.bankrupt) throw new Error("Ce joueur est éliminé");
   if (offer.giveMoney > player.money) throw new Error("Fonds insuffisants");
@@ -473,11 +496,28 @@ function drawCard(s: GameState, events: GameEvent[], deck: "chance" | "chest"): 
     s.decks[deck] = shuffled(s, s.discards[deck]);
     s.discards[deck] = [];
   }
-  const cardId = s.decks[deck].shift() as string;
+  const cardId = s.decks[deck].shift();
+  // A deck can only be empty here if every one of its cards is held as a
+  // "sortie de prison"; with 16 cards and one such card that cannot happen.
+  if (cardId === undefined) throw new Error("Paquet vide");
   (s.players[s.current] as Player).stats.cardsDrawn += 1;
   events.push({ t: "show-card", deck, cardId });
   s.card = { deck, cardId };
   s.phase = "card";
+}
+
+/**
+ * Returns a resolved card to the bottom of its discard pile, so the deck can
+ * be rebuilt from it once exhausted. Without this the sixteenth draw empties
+ * the deck for good and the next one wedges the game in the `card` phase.
+ *
+ * A "sortie de prison" card is the one exception: its holder keeps it. It
+ * simply leaves circulation when spent rather than going back to the pile —
+ * one card fewer in a deck of sixteen changes nothing anyone can notice.
+ */
+function discardCard(s: GameState, deck: "chance" | "chest", cardId: string): void {
+  if (CARDS_BY_ID[cardId]?.effect.k === "jail-free") return;
+  s.discards[deck].push(cardId);
 }
 
 function applyCardEffect(s: GameState, events: GameEvent[], cardId: string): void {
@@ -632,6 +672,13 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     lastRoll: prev.lastRoll ? { ...prev.lastRoll } : null,
     log: [...prev.log],
     pendingAuctions: [...prev.pendingAuctions],
+    // `auction` is mutated field-by-field by `bid` and `auction-pass`, so a
+    // shared reference would write straight through into `prev`. `debt` and
+    // `card` are only ever reassigned wholesale today, but they are cloned
+    // too so the next edit cannot reintroduce the same bug.
+    auction: prev.auction ? { ...prev.auction, order: [...prev.auction.order] } : null,
+    debt: prev.debt ? { ...prev.debt } : null,
+    card: prev.card ? { ...prev.card } : null,
   };
   const events: GameEvent[] = [];
   const player = s.players[s.current] as Player;
@@ -644,10 +691,12 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     }
     case "ack-card": {
       assertPhase(s, "card");
-      const cardId = (s.card as NonNullable<GameState["card"]>).cardId;
+      const pending = s.card as NonNullable<GameState["card"]>;
+      const { deck, cardId } = pending;
       s.card = null;
       s.phase = "resolving";
       applyCardEffect(s, events, cardId);
+      discardCard(s, deck, cardId);
       if (s.phase === "resolving") finishResolution(s, events);
       break;
     }
@@ -679,6 +728,11 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       const a = s.auction as NonNullable<GameState["auction"]>;
       const bidderId = a.order[0] as number;
       const bidder = s.players[bidderId] as Player;
+      // Checked before the comparisons below: NaN fails every `>` and `<=`
+      // test, so it would otherwise sail past both guards into `highBid`.
+      if (!Number.isInteger(action.amount) || action.amount <= 0) {
+        throw new Error("Enchère invalide");
+      }
       if (action.amount > bidder.money) throw new Error("Fonds insuffisants");
       if (action.amount <= a.highBid) throw new Error("Enchère trop basse");
       a.highBid = action.amount;
@@ -716,21 +770,25 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     }
     case "build": {
       assertManageable(s);
+      assertBoardPos(action.pos);
       buildHouse(s, events, player, action.pos);
       break;
     }
     case "sell-house": {
-      assertManageable(s);
+      assertRaiseFunds(s);
+      assertBoardPos(action.pos);
       sellHouse(s, events, player, action.pos);
       break;
     }
     case "mortgage": {
-      assertManageable(s);
+      assertRaiseFunds(s);
+      assertBoardPos(action.pos);
       mortgageTile(s, events, player, action.pos);
       break;
     }
     case "unmortgage": {
       assertManageable(s);
+      assertBoardPos(action.pos);
       unmortgageTile(s, events, player, action.pos);
       break;
     }
@@ -795,7 +853,12 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       break;
     }
     case "propose-trade": {
-      assertPhase(s, "post-roll");
+      // The HUD has always offered trading before the roll as well as after;
+      // the engine only accepted `post-roll`, so every such offer was built
+      // and then thrown away with a red toast. Both are legal.
+      if (s.phase !== "turn-start" && s.phase !== "post-roll") {
+        throw new Error("Échange impossible maintenant");
+      }
       const offer = action.offer;
       validateTrade(s, player, offer);
       const target = s.players[offer.to] as Player;
