@@ -86,6 +86,8 @@ interface Store {
   manageOpen: boolean;
   tradeOpen: boolean;
   logOpen: boolean;
+  /** The written chat, online only. View state, like the journal beside it. */
+  chatOpen: boolean;
   /**
    * The left roster: folded to a tab to clear the board, and which of its
    * two faces — players or spectators — is showing. View only, and not
@@ -118,6 +120,7 @@ interface Store {
   toggleManage: () => void;
   toggleTrade: () => void;
   toggleLog: () => void;
+  toggleChat: () => void;
   toggleSettings: () => void;
   updateSettings: (patch: Partial<Settings>) => void;
   askQuit: () => void;
@@ -371,6 +374,7 @@ export const useGame = create<Store>()(
     manageOpen: false,
     tradeOpen: false,
     logOpen: false,
+    chatOpen: false,
     rosterOpen: true,
     rosterTab: "players",
     toggleRoster: () => set((s) => ({ rosterOpen: !s.rosterOpen })),
@@ -404,6 +408,7 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        chatOpen: false,
         rosterOpen: true,
         rosterTab: "players",
         rainKey: 0,
@@ -434,6 +439,7 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        chatOpen: false,
         rosterOpen: true,
         rosterTab: "players",
         rainKey: 0,
@@ -465,6 +471,7 @@ export const useGame = create<Store>()(
         manageOpen: false,
         tradeOpen: false,
         logOpen: false,
+        chatOpen: false,
         rosterOpen: true,
         rosterTab: "players",
         rainKey: 0,
@@ -521,6 +528,7 @@ export const useGame = create<Store>()(
     toggleManage: () => set((s) => ({ manageOpen: !s.manageOpen })),
     toggleTrade: () => set((s) => ({ tradeOpen: !s.tradeOpen })),
     toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
+    toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
   toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
   askQuit: () => set({ confirmQuitOpen: true }),
   cancelQuit: () => set({ confirmQuitOpen: false }),
@@ -532,7 +540,17 @@ export const useGame = create<Store>()(
     }),
     {
       name: "dakaropoly/save",
-      version: 1,
+      version: 2,
+      // A save written before offers could sit on the table has no
+      // `pendingTrade`. Filling it in beats dropping an evening's game,
+      // which is what a bare version bump would do.
+      migrate: (persisted, from) => {
+        const saved = persisted as PersistedState;
+        if (from < 2 && saved.game && saved.game.pendingTrade === undefined) {
+          saved.game.pendingTrade = null;
+        }
+        return saved;
+      },
       // A Monopoly evening is long: only the board state is worth keeping.
       // Anything mid-animation is transient and is rebuilt on rehydrate.
       partialize: (s): PersistedState => ({

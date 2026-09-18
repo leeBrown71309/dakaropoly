@@ -42,6 +42,7 @@ export type IconName =
   | "book"
   | "ranking"
   | "eye"
+  | "chat"
   | "plus"
   | "minus"
   | "close";
@@ -205,6 +206,12 @@ const ICONS: Record<IconName, ReactNode> = {
     </>
   ),
   ranking: <path d="M4.4 6.6h15.2M4.4 12h10.4M4.4 17.4h6" />,
+  chat: (
+    <>
+      <path d="M20.2 13.4a2.6 2.6 0 0 1-2.6 2.6H8.9L4.6 19.6v-3.6H4.4a2.6 2.6 0 0 1 0-5.2V6.6A2.6 2.6 0 0 1 7 4h10.6a2.6 2.6 0 0 1 2.6 2.6z" />
+      <path d="M8.6 8.9h6.8M8.6 12.1h4.4" />
+    </>
+  ),
   eye: (
     <>
       <path d="M2.9 12Q12 4.9 21.1 12 12 19.1 2.9 12Z" />

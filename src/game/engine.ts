@@ -60,6 +60,7 @@ export function createGame(
     winner: null,
     pendingAuctions: [],
     turnEnded: false,
+    pendingTrade: null,
     decks: { chance: [], chest: [] },
     discards: { chance: [], chest: [] },
     rng: seed,
@@ -377,6 +378,11 @@ function finishResolution(s: GameState, events: GameEvent[]): void {
 }
 
 function endTurn(s: GameState, events: GameEvent[]): void {
+  // An offer belongs to the turn it was made in. Letting one sit through
+  // somebody else's turn would mean accepting it against a board that has
+  // moved on, and offers would pile up one per player.
+  lapseTrade(s, events);
+
   const active = activePlayers(s);
   if (active.length <= 1) {
     s.phase = "game-over";
@@ -482,6 +488,49 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
     title: "Faillite",
     detail: `${debtor.name} quitte la partie`,
   });
+}
+
+/** Clears an unanswered offer, saying so if there was one. */
+function lapseTrade(s: GameState, events: GameEvent[]): void {
+  const pending = s.pendingTrade;
+  if (!pending) return;
+  s.pendingTrade = null;
+  const from = s.players[pending.from];
+  const to = s.players[pending.offer.to];
+  events.push({
+    t: "toast",
+    text: `Offre de ${from?.name ?? "?"} à ${to?.name ?? "?"} expirée`,
+    tone: "info",
+  });
+}
+
+/**
+ * Moves what an accepted offer says to move.
+ *
+ * Split out from the action so that it happens in exactly one place: the
+ * offer is checked when it is made and checked again when it is answered,
+ * and both roads have to lead to the same transfer.
+ */
+function settleTrade(s: GameState, events: GameEvent[], from: Player, offer: TradeOffer): void {
+  const target = s.players[offer.to] as Player;
+  if (offer.giveMoney > 0) {
+    from.money -= offer.giveMoney;
+    target.money += offer.giveMoney;
+    events.push({ t: "money", player: target.id, amount: offer.giveMoney });
+  }
+  if (offer.takeMoney > 0) {
+    target.money -= offer.takeMoney;
+    from.money += offer.takeMoney;
+    events.push({ t: "money", player: from.id, amount: offer.takeMoney });
+  }
+  for (const pos of offer.giveProps) {
+    (s.tiles[pos] as TileState).owner = offer.to;
+    events.push({ t: "transfer", from: from.id, to: offer.to, pos });
+  }
+  for (const pos of offer.takeProps) {
+    (s.tiles[pos] as TileState).owner = from.id;
+    events.push({ t: "transfer", from: offer.to, to: from.id, pos });
+  }
 }
 
 function validateTrade(s: GameState, player: Player, offer: TradeOffer): void {
@@ -696,6 +745,16 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     auction: prev.auction ? { ...prev.auction, order: [...prev.auction.order] } : null,
     debt: prev.debt ? { ...prev.debt } : null,
     card: prev.card ? { ...prev.card } : null,
+    pendingTrade: prev.pendingTrade
+      ? {
+          ...prev.pendingTrade,
+          offer: {
+            ...prev.pendingTrade.offer,
+            giveProps: [...prev.pendingTrade.offer.giveProps],
+            takeProps: [...prev.pendingTrade.offer.takeProps],
+          },
+        }
+      : null,
   };
   const events: GameEvent[] = [];
   const player = s.players[s.current] as Player;
@@ -869,35 +928,65 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       endTurn(s, events);
       break;
     }
-    case "propose-trade": {
+    case "offer-trade": {
       // The HUD has always offered trading before the roll as well as after;
       // the engine only accepted `post-roll`, so every such offer was built
       // and then thrown away with a red toast. Both are legal.
       if (s.phase !== "turn-start" && s.phase !== "post-roll") {
         throw new Error("Échange impossible maintenant");
       }
+      if (s.pendingTrade) throw new Error("Une offre attend déjà une réponse");
       const offer = action.offer;
+      // Checked here so an impossible offer is refused at once rather than
+      // sitting on the table until somebody tries to accept it.
       validateTrade(s, player, offer);
       const target = s.players[offer.to] as Player;
-      if (offer.giveMoney > 0) {
-        player.money -= offer.giveMoney;
-        target.money += offer.giveMoney;
-        events.push({ t: "money", player: target.id, amount: offer.giveMoney });
-      }
-      if (offer.takeMoney > 0) {
-        target.money -= offer.takeMoney;
-        player.money += offer.takeMoney;
-        events.push({ t: "money", player: player.id, amount: offer.takeMoney });
-      }
-      for (const pos of offer.giveProps) {
-        (s.tiles[pos] as TileState).owner = offer.to;
-        events.push({ t: "transfer", from: player.id, to: offer.to, pos });
-      }
-      for (const pos of offer.takeProps) {
-        (s.tiles[pos] as TileState).owner = player.id;
-        events.push({ t: "transfer", from: offer.to, to: player.id, pos });
-      }
-      addLog(s, `Échange entre ${player.name} et ${target.name} accepté`);
+      s.pendingTrade = { from: player.id, offer };
+      events.push({ t: "sound", name: "card" });
+      events.push({
+        t: "toast",
+        text: `${player.name} propose un échange à ${target.name}`,
+        tone: "info",
+      });
+      break;
+    }
+    case "accept-trade": {
+      const pending = s.pendingTrade;
+      if (!pending) throw new Error("Aucune offre sur la table");
+      const from = s.players[pending.from] as Player;
+      const target = s.players[pending.offer.to] as Player;
+      // Checked a second time: the board has been free to move since the
+      // offer was made, and an offer that was fair then may not be now.
+      validateTrade(s, from, pending.offer);
+      s.pendingTrade = null;
+      settleTrade(s, events, from, pending.offer);
+      events.push({ t: "sound", name: "coin" });
+      events.push({
+        t: "toast",
+        text: `${target.name} accepte l'échange avec ${from.name}`,
+        tone: "good",
+      });
+      break;
+    }
+    case "reject-trade": {
+      const pending = s.pendingTrade;
+      if (!pending) throw new Error("Aucune offre sur la table");
+      const from = s.players[pending.from] as Player;
+      const target = s.players[pending.offer.to] as Player;
+      s.pendingTrade = null;
+          events.push({
+        t: "toast",
+        text: `${target.name} refuse l'échange de ${from.name}`,
+        tone: "bad",
+      });
+      break;
+    }
+    case "withdraw-trade": {
+      const pending = s.pendingTrade;
+      if (!pending) throw new Error("Aucune offre sur la table");
+      const from = s.players[pending.from] as Player;
+      s.pendingTrade = null;
+          events.push({ t: "toast", text: `${from.name} retire son offre`, tone: "info" });
       break;
     }
     default:

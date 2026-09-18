@@ -159,9 +159,31 @@ matter live there, not in the client.
   alone handed spectators the whole table.
 - Creating a room sweeps rooms untouched for 24 hours, so finished games do
   not accumulate. There is no scheduler to maintain.
-- Trades are **disabled online** until they become propose-then-accept: the
-  engine still executes an offer on the spot, with no consent from the other
-  side.
+- **A trade is an offer, not a transfer.** `offer-trade` only puts
+  `pendingTrade` on the board; nothing moves until the other player sends
+  `accept-trade` from their own device. `tradeRoleFor` in `selectors.ts` says
+  which of the two sides a device is on — the third player at the table gets
+  neither pane, only the toast. An offer is checked when it is made *and*
+  again when it is answered, because the board is free to move in between,
+  and it lapses with the turn it was made in rather than outliving it.
+- **Chat rides the game channel.** Realtime *is* a WebSocket, so the written
+  chat is one more message type on the socket that is already open: no second
+  service, no second connection, nothing stored. Talk belongs to the evening.
+
+### Spectators
+
+Somebody standing in the room has no row anywhere. A seat is a database fact;
+watching is a fact about the channel, so the watcher list is rebuilt from
+Realtime presence on every sync, and the name comes from what each device puts
+in its own presence payload. They receive the same actions, replay them
+through the same engine, and write nothing.
+
+`localPlayerId === null` means two different things — hot-seat, where one
+device speaks for whoever is to move, and a spectator, who speaks for nobody.
+`online` in the store tells them apart; `mayAct` in `selectors.ts` is the only
+place that decides. Reading the seat alone handed spectators the whole table.
+`dispatch` refuses them a second time, because the relay would broadcast
+whatever slipped through to everyone.
 
 ### Leaving a room, and coming back
 

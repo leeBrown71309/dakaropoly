@@ -225,7 +225,9 @@ function Lobby({ compact }: { compact: boolean }) {
 
   const me = seats.find((s) => s.clientId === clientId);
   const players = seatedInOrder(seats);
-  const watchers = seats.filter((s) => s.seat === null);
+  // Presence, not the roster: standing in a room is a fact about the channel
+  // rather than about the game, and nobody writes a row to watch.
+  const watchers = useRoom((s) => s.watchers);
   const isHost = clientId !== null && clientId === hostId;
   const takenPawns = seats
     .filter((s) => s.clientId !== clientId && s.pawn !== null)

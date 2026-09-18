@@ -2,7 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
-import { useIsOnline } from "../useTurn";
+import { useIsMyTurn } from "../useTurn";
 import { BOARD } from "../../game/data/board";
 import { GROUP_COLORS } from "../../game/colors";
 import { ownedPositions } from "../../game/selectors";
@@ -106,7 +106,7 @@ export function TradeModal() {
   const toggleTrade = useGame((s) => s.toggleTrade);
   const dispatch = useGame((s) => s.dispatch);
   const compact = useCompact();
-  const online = useIsOnline();
+  const myTurn = useIsMyTurn();
 
   const [to, setTo] = useState<number | null>(null);
   const [giveMoney, setGiveMoney] = useState(0);
@@ -119,8 +119,15 @@ export function TradeModal() {
   const current = game.players[game.current];
   if (!current) return null;
 
+  // Online too, now that an offer has to be answered rather than executed
+  // on the spot. One at a time: a second would have to be answered against a
+  // board the first is about to change. The turn check is the builder's own
+  // rather than only the rail's, because the engine credits an offer to
+  // whoever is to move — it would otherwise be made in their name.
   const canTrade =
-    !online && (game.phase === "post-roll" || game.phase === "turn-start");
+    myTurn &&
+    !game.pendingTrade &&
+    (game.phase === "post-roll" || game.phase === "turn-start");
   const target = to !== null ? game.players[to] : null;
 
   const reset = () => {
@@ -215,8 +222,8 @@ export function TradeModal() {
                       compact ? "text-[12px]" : "text-[13px]"
                     }`}
                   >
-                    <span className="u-display text-[15px] text-ink-900">{target.name}</span>, acceptes-tu cet
-                    échange&nbsp;?
+                    Envoyer cette proposition à{" "}
+                    <span className="u-display text-[15px] text-ink-900">{target.name}</span>&nbsp;?
                   </p>
                   <div className="grid grid-cols-2 gap-3">
                     <Summary owner={current} caption="donne" money={giveMoney} props={giveProps} />
@@ -232,13 +239,13 @@ export function TradeModal() {
                       icon="check"
                       onClick={() => {
                         dispatch({
-                          t: "propose-trade",
+                          t: "offer-trade",
                           offer: { to: target.id, giveMoney, giveProps, takeMoney, takeProps },
                         });
                         close();
                       }}
                     >
-                      Accepter l'échange
+                      Envoyer
                     </Button>
                   </div>
                 </div>
@@ -295,7 +302,8 @@ export function TradeModal() {
   );
 }
 
-function Summary({
+/** Also read by `TradeOffer`, so both sides of a deal are laid out alike. */
+export function Summary({
   owner,
   caption,
   money,

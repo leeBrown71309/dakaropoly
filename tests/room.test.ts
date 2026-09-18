@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyAction, createGame } from "../src/game/engine";
-import { mayAct } from "../src/game/selectors";
+import { mayAct, tradeRoleFor } from "../src/game/selectors";
 import { formatCode, normaliseCode, seatOffers, type RoomRow, type Seat } from "../src/net/room";
 import type { GameState } from "../src/game/types";
 
@@ -160,5 +160,40 @@ describe("who may act", () => {
     const s: GameState = { ...game(), phase: "game-over", winner: 0 };
     expect(mayAct(s, true, 0)).toBe(false);
     expect(mayAct(s, true, 1)).toBe(false);
+  });
+});
+
+describe("who answers an offer", () => {
+  function onTheTable(): GameState {
+    let s = table();
+    s = { ...s, tiles: s.tiles.map((t, i) => (i === 1 ? { ...t, owner: 0 } : t)) };
+    return applyAction(s, {
+      t: "offer-trade",
+      offer: { to: 2, giveMoney: 0, giveProps: [1], takeMoney: 50, takeProps: [] },
+    }).state;
+  }
+
+  it("asks nothing of anyone when the table is clear", () => {
+    expect(tradeRoleFor(table(), true, 0)).toBeNull();
+    expect(tradeRoleFor(table(), false, null)).toBeNull();
+  });
+
+  it("puts the decision with the player being offered the deal", () => {
+    expect(tradeRoleFor(onTheTable(), true, 2)).toBe("answer");
+  });
+
+  it("leaves the proposer waiting rather than deciding", () => {
+    // The whole point: the side that stands to gain cannot settle it.
+    expect(tradeRoleFor(onTheTable(), true, 0)).toBe("await");
+  });
+
+  it("does not put a modal over a deal between two other players", () => {
+    expect(tradeRoleFor(onTheTable(), true, 1)).toBeNull();
+    // A spectator has no seat and no say.
+    expect(tradeRoleFor(onTheTable(), true, null)).toBeNull();
+  });
+
+  it("answers on one screen, where the other player is standing right there", () => {
+    expect(tradeRoleFor(onTheTable(), false, null)).toBe("answer");
   });
 });

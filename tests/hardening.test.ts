@@ -172,13 +172,97 @@ describe("trading before the roll", () => {
     s = own(s, 1, 0);
     expect(s.phase).toBe("turn-start");
 
-    const after = applyAction(s, {
-      t: "propose-trade",
+    const offered = applyAction(s, {
+      t: "offer-trade",
       offer: { to: 1, giveMoney: 0, giveProps: [1], takeMoney: 100, takeProps: [] },
     }).state;
+    const after = applyAction(offered, { t: "accept-trade" }).state;
 
     expect(after.tiles[1]?.owner).toBe(1);
     expect(after.players[0]?.money).toBe(1600);
+  });
+});
+
+/**
+ * An offer used to execute the instant it was made. On one screen that is
+ * only impolite; across a network it is a way to take somebody's property
+ * without ever asking them.
+ */
+describe("trades need both sides", () => {
+  function offered(): GameState {
+    let s = makeGame();
+    s = own(s, 1, 0);
+    s = own(s, 5, 1);
+    return applyAction(s, {
+      t: "offer-trade",
+      offer: { to: 1, giveMoney: 200, giveProps: [1], takeMoney: 0, takeProps: [5] },
+    }).state;
+  }
+
+  it("moves nothing at all when the offer is made", () => {
+    const s = offered();
+    expect(s.pendingTrade).not.toBeNull();
+    expect(s.tiles[1]?.owner).toBe(0);
+    expect(s.tiles[5]?.owner).toBe(1);
+    expect(s.players[0]?.money).toBe(1500);
+    expect(s.players[1]?.money).toBe(1500);
+  });
+
+  it("moves everything once it is accepted", () => {
+    const s = applyAction(offered(), { t: "accept-trade" }).state;
+    expect(s.pendingTrade).toBeNull();
+    expect(s.tiles[1]?.owner).toBe(1);
+    expect(s.tiles[5]?.owner).toBe(0);
+    expect(s.players[0]?.money).toBe(1300);
+    expect(s.players[1]?.money).toBe(1700);
+  });
+
+  it("moves nothing when it is refused", () => {
+    const s = applyAction(offered(), { t: "reject-trade" }).state;
+    expect(s.pendingTrade).toBeNull();
+    expect(s.tiles[1]?.owner).toBe(0);
+    expect(s.players[0]?.money).toBe(1500);
+  });
+
+  it("moves nothing when the proposer takes it back", () => {
+    const s = applyAction(offered(), { t: "withdraw-trade" }).state;
+    expect(s.pendingTrade).toBeNull();
+    expect(s.tiles[1]?.owner).toBe(0);
+  });
+
+  it("refuses a second offer while one is waiting", () => {
+    expect(() =>
+      applyAction(offered(), {
+        t: "offer-trade",
+        offer: { to: 1, giveMoney: 1, giveProps: [], takeMoney: 0, takeProps: [] },
+      }),
+    ).toThrow();
+  });
+
+  it("lets the offer lapse with the turn rather than outlive it", () => {
+    // Accepting it during somebody else's turn would settle it against a
+    // board that has moved on since.
+    let s = applyAction(offered(), { t: "roll", forced: { a: 1, b: 2 } }).state;
+    s = { ...s, phase: "post-roll", buyTile: null, auction: null, debt: null, card: null };
+    const ended = applyAction(s, { t: "end-turn" }).state;
+    expect(ended.pendingTrade).toBeNull();
+    expect(ended.tiles[1]?.owner).toBe(0);
+  });
+
+  it("checks the offer again before settling it", () => {
+    // The proposer spent the money they promised between offering and being
+    // answered; the deal must not go through on credit.
+    const s = offered();
+    const broke: GameState = {
+      ...s,
+      players: s.players.map((pl, i) => (i === 0 ? { ...pl, money: 10 } : pl)),
+    };
+    expect(() => applyAction(broke, { t: "accept-trade" })).toThrow("Fonds insuffisants");
+  });
+
+  it("refuses an answer when nothing is on the table", () => {
+    expect(() => applyAction(makeGame(), { t: "accept-trade" })).toThrow();
+    expect(() => applyAction(makeGame(), { t: "reject-trade" })).toThrow();
   });
 });
 

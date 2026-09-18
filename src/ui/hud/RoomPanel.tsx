@@ -21,6 +21,7 @@ export function RoomPanel() {
   const code = useRoom((s) => s.code);
   const seats = useRoom((s) => s.seats);
   const present = useRoom((s) => s.present);
+  const watchers = useRoom((s) => s.watchers);
   const clientId = useRoom((s) => s.clientId);
   const reconnecting = useRoom((s) => s.reconnecting);
   const restore = useRoom((s) => s.restore);
@@ -30,7 +31,7 @@ export function RoomPanel() {
   if (!code) return null;
 
   const connected = clientId !== null && present.includes(clientId);
-  const players = [...seats].sort((a, b) => (a.seat ?? 99) - (b.seat ?? 99));
+  const players = seats.filter((s) => s.seat !== null).sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0));
 
   return (
     <div>
@@ -73,10 +74,7 @@ export function RoomPanel() {
               <span style={{ color: PLAYER_COLORS[s.pawn ?? 0] }} className="shrink-0">
                 <PawnGlyph pawn={s.pawn ?? 0} size={16} />
               </span>
-              <span className="text-[11.5px] font-bold text-ink-700">
-                {s.name}
-                {s.seat === null && <span className="ml-1 text-ink-300">spectateur</span>}
-              </span>
+              <span className="text-[11.5px] font-bold text-ink-700">{s.name}</span>
               <span
                 className="h-1.5 w-1.5 rounded-full"
                 title={here ? "connecté" : "absent"}
@@ -86,6 +84,17 @@ export function RoomPanel() {
           );
         })}
       </div>
+
+      {watchers.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Icon name="eye" size={13} className="shrink-0 text-ink-300" />
+          {watchers.map((w) => (
+            <span key={w.clientId} className="text-[11.5px] text-ink-500">
+              {w.name}
+            </span>
+          ))}
+        </div>
+      )}
 
       {!connected && (
         <div className="mt-2 flex items-center gap-2">

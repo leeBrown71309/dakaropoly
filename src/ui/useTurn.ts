@@ -1,5 +1,5 @@
 import { useGame } from "../game/store";
-import { actorFor, mayAct } from "../game/selectors";
+import { actorFor, mayAct, tradeRoleFor, type TradeRole } from "../game/selectors";
 
 /**
  * Whether this device may act right now.
@@ -37,6 +37,18 @@ export function useMySeat(): number | null {
 /** True when this game is being played across devices rather than hot-seat. */
 export function useIsOnline(): boolean {
   return useGame((s) => s.online);
+}
+
+/**
+ * Where this device stands in an offer lying on the table: answering it,
+ * waiting on it, or — for everyone else at the table — neither.
+ */
+export function useTradeRole(): TradeRole {
+  const game = useGame((s) => s.game);
+  const online = useGame((s) => s.online);
+  const localPlayerId = useGame((s) => s.localPlayerId);
+  if (!game) return null;
+  return tradeRoleFor(game, online, localPlayerId);
 }
 
 /** True when this device is watching a game it has no seat in. */

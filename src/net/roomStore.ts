@@ -4,6 +4,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { Action, GameState } from "../game/types";
 import { createGame } from "../game/engine";
 import { pushToast, setActionRelay, useGame } from "../game/store";
+import { sfx } from "../audio/sounds";
 import { ensureSession, supabase } from "./supabase";
 import {
   claimSeat,
@@ -34,7 +35,28 @@ type Wire =
   | { k: "action"; action: Action; from: number; by: string }
   | { k: "roster" }
   | { k: "start" }
-  | { k: "resync" };
+  | { k: "resync" }
+  | { k: "chat"; msg: ChatMessage };
+
+/**
+ * Something somebody said. Carried on the channel that is already open for
+ * the game itself — Realtime *is* a WebSocket, so a written chat costs a
+ * message type and nothing else: no second service, no second connection.
+ *
+ * Nothing is written to the database. Talk belongs to the evening, and a
+ * room that outlives it should not keep a transcript.
+ */
+export interface ChatMessage {
+  id: string;
+  clientId: string;
+  name: string;
+  text: string;
+  at: number;
+}
+
+/** Longest a message may be, and how many are kept. */
+const CHAT_MAX_CHARS = 240;
+const CHAT_KEEP = 80;
 
 /** A code that turned out to open onto a game already under way. */
 export interface Pending {
@@ -81,6 +103,10 @@ interface RoomState {
   pending: Pending | null;
   /** True from a page reload until the room has answered again. */
   reconnecting: boolean;
+  /** What has been said in this room, oldest first. */
+  messages: ChatMessage[];
+  /** Messages that arrived while the chat was shut. */
+  unread: number;
 
   host: (name: string, pawn: number) => Promise<void>;
   join: (code: string, name: string, pawn: number | null) => Promise<void>;
@@ -94,6 +120,9 @@ interface RoomState {
   leave: () => Promise<void>;
   /** Picks the room back up after a reload, or after a failed attempt. */
   restore: () => Promise<void>;
+  /** Says something to the room. */
+  say: (text: string) => void;
+  markRead: () => void;
   clearError: () => void;
 }
 
@@ -135,8 +164,30 @@ export const useRoom = create<RoomState>()(
       busy: false,
       pending: null,
       reconnecting: false,
+      messages: [],
+      unread: 0,
 
       clearError: () => set({ error: null }),
+      markRead: () => set({ unread: 0 }),
+
+      /**
+       * Sent rather than appended: it comes back through the channel like
+       * everything else, so a message appears here at the same moment it
+       * appears for everyone — and if it never went out, it never shows.
+       */
+      say: (text) => {
+        const trimmed = text.trim().slice(0, CHAT_MAX_CHARS);
+        const { clientId, myName } = get();
+        if (!trimmed || !channel || !clientId) return;
+        const msg: ChatMessage = {
+          id: `${clientId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          clientId,
+          name: myName ?? "Un joueur",
+          text: trimmed,
+          at: Date.now(),
+        };
+        void channel.send({ type: "broadcast", event: "room", payload: { k: "chat", msg } satisfies Wire });
+      },
       cancelPending: () => set({ pending: null }),
 
       host: async (name, pawn) => {
@@ -294,6 +345,8 @@ export const useRoom = create<RoomState>()(
           watchers: [],
           version: 0,
           pending: null,
+          messages: [],
+          unread: 0,
         });
 
         try {
@@ -376,7 +429,14 @@ export const useRoom = create<RoomState>()(
        * should show the people standing in the room at once, and let the
        * first presence sync correct whoever has since slipped away.
        */
-      partialize: (s) => ({ code: s.code, myName: s.myName, watchers: s.watchers }),
+      partialize: (s) => ({
+        code: s.code,
+        myName: s.myName,
+        watchers: s.watchers,
+        // The conversation comes back with the tab. Losing what was just said
+        // to a refresh is the one thing a chat must not do.
+        messages: s.messages.slice(-CHAT_KEEP),
+      }),
       onRehydrateStorage: () => (state) => {
         // Installed here rather than after the first render: the board comes
         // back from storage ready to play, and nothing may be played until
@@ -614,6 +674,20 @@ async function handle(
     case "resync":
       await resync(code, clientId, set);
       return;
+
+    case "chat": {
+      const { messages, unread } = get();
+      // The sender gets its own message back like everyone else, so a repeat
+      // would show twice rather than not at all.
+      if (messages.some((m) => m.id === msg.msg.id)) return;
+      const shut = !useGame.getState().chatOpen;
+      set({
+        messages: [...messages, msg.msg].slice(-CHAT_KEEP),
+        unread: shut && msg.msg.clientId !== clientId ? unread + 1 : unread,
+      });
+      if (shut && msg.msg.clientId !== clientId) sfx.play("card");
+      return;
+    }
 
     case "action": {
       const version = get().version;
