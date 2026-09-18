@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { applyAction, createGame } from "../src/game/engine";
 import { mayAct, tradeRoleFor } from "../src/game/selectors";
-import { formatCode, normaliseCode, seatOffers, type RoomRow, type Seat } from "../src/net/room";
+import {
+  formatCode,
+  normaliseCode,
+  seatOf,
+  seatOffers,
+  type RoomRow,
+  type Seat,
+} from "../src/net/room";
 import type { GameState } from "../src/game/types";
 
 /**
@@ -38,7 +45,7 @@ function room(state: GameState = table()): RoomRow {
 }
 
 /** A roster row. The name is deliberately wrong; the board is the authority. */
-function row(clientId: string, seat: number, absent = false): Seat {
+function row(clientId: string, seat: number | null, absent = false): Seat {
   return { clientId, seat, name: "rosterName", pawn: 99, avatar: null, absent };
 }
 
@@ -195,5 +202,43 @@ describe("who answers an offer", () => {
 
   it("answers on one screen, where the other player is standing right there", () => {
     expect(tradeRoleFor(onTheTable(), false, null)).toBe("answer");
+  });
+});
+
+/**
+ * A chair is a row in the roster, not a name in `seat_order`.
+ *
+ * The order keeps naming whoever was given that engine player at kickoff —
+ * which is what lets them come back to it — so reading it alone let a player
+ * leave, return through the spectator door, and be sat straight back down:
+ * still able to play, missing from their own spectator list, and a player
+ * and a spectator at once to everybody else.
+ */
+describe("which chair this device is in", () => {
+  const order = ["aaa", "bbb", "ccc"];
+
+  it("seats a player whose row still holds the chair", () => {
+    expect(seatOf(order, [row("aaa", 0), row("bbb", 1)], "aaa")).toBe(0);
+    expect(seatOf(order, [row("aaa", 0), row("bbb", 1)], "bbb")).toBe(1);
+  });
+
+  it("seats nobody who is not in the order at all", () => {
+    expect(seatOf(order, [row("zzz", null)], "zzz")).toBeNull();
+  });
+
+  it("gives no chair to a player who left it", () => {
+    // Leaving deletes the row; the order goes on naming them.
+    expect(seatOf(order, [row("bbb", 1)], "aaa")).toBeNull();
+  });
+
+  it("gives no chair to one who came back to watch", () => {
+    // Back in the room, named in the order, holding no row: a spectator.
+    expect(seatOf(order, [row("bbb", 1)], "aaa")).toBeNull();
+  });
+
+  it("refuses a row that claims a different chair than the order does", () => {
+    // Somebody else took seat 0 while they were away; the order has since
+    // been rewritten for them, and a stale read must not seat two people.
+    expect(seatOf(order, [row("aaa", 2)], "aaa")).toBeNull();
   });
 });

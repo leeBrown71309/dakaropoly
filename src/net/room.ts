@@ -285,6 +285,27 @@ export async function startRoom(
   if (error) throw new Error(error.message);
 }
 
+/**
+ * Which seat this device actually occupies, or `null` when it is watching.
+ *
+ * `seat_order` records which client was handed which engine player at
+ * kickoff, and it keeps saying so after they walk out — that is exactly what
+ * lets them come back to the same chair. It is *not* proof they are still
+ * sitting in it. Holding a seat is a row in `room_players`; the list is only
+ * the numbering.
+ *
+ * Reading the list alone let a player leave, come back through the spectator
+ * door, and be quietly sat back down: able to play on their old seat, absent
+ * from their own spectator list, and a player and a spectator at once to
+ * everybody else.
+ */
+export function seatOf(seatOrder: string[], seats: Seat[], clientId: string): number | null {
+  const index = seatOrder.indexOf(clientId);
+  if (index === -1) return null;
+  const held = seats.find((s) => s.clientId === clientId)?.seat;
+  return held === index ? index : null;
+}
+
 /** The players who will actually sit down, in the order the engine will use. */
 export function seatedInOrder(seats: Seat[]): Seat[] {
   return seats.filter((s) => s.seat !== null).sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0));
