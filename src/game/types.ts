@@ -147,21 +147,34 @@ export type GameEvent =
   | { t: "turn"; player: number }
   | { t: "winner"; player: number }
   | { t: "toast"; text: string; tone: "good" | "bad" | "info" }
+  | { t: "announce"; kind: AnnounceKind; title: string; detail: string; amount?: number }
   | { t: "sound"; name: SoundName };
+
+/**
+ * Moments that happen *to* a player rather than being chosen by them.
+ * They interrupt the animation queue with a card, because a toast is too
+ * easy to miss when money leaves your account without you clicking.
+ */
+export type AnnounceKind = "tax" | "jail" | "rent" | "bankruptcy";
 
 export type SoundName =
   | "dice"
   | "step"
-  | "coin"
-  | "cash"
+  | "register"
   | "pay"
+  | "coin"
   | "card"
   | "jail"
   | "buy"
   | "build"
-  | "buzzer"
+  | "sell"
+  | "mortgage"
+  | "unmortgage"
+  | "gavel"
+  | "bankrupt"
   | "teleport"
   | "win";
+
 
 export interface TradeOffer {
   to: number;

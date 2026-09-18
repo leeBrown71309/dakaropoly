@@ -1,48 +1,60 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
-import { formatMoney } from "../../game/types";
+import { useCompact } from "../useViewport";
 import { netWorthOf, ownedPositions } from "../../game/selectors";
 import type { GameState } from "../../game/types";
+import { Card, Label, BrassRule } from "../kit/Surface";
+import { Button } from "../kit/Button";
+import { Money } from "../kit/Money";
+import { PawnGlyph } from "../icons/PawnGlyph";
+import { Icon, type IconName } from "../icons/Icon";
 
-const AWARDS: { icon: string; label: string; stat: (s: GameState) => Record<number, number>; onlyIf: number }[] = [
+interface AwardDef {
+  icon: IconName;
+  label: string;
+  of: (s: GameState) => Record<number, number>;
+  min: number;
+}
+
+const AWARDS: AwardDef[] = [
   {
-    icon: "👑",
+    icon: "crown",
     label: "Roi du loyer",
-    stat: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.rentsCollected])),
-    onlyIf: 1,
+    of: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.rentsCollected])),
+    min: 1,
   },
   {
-    icon: "🔒",
+    icon: "jail",
     label: "Client fidèle de Rebeuss",
-    stat: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.jailVisits])),
-    onlyIf: 1,
+    of: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.jailVisits])),
+    min: 1,
   },
   {
-    icon: "🏗️",
+    icon: "hotel",
     label: "Baron de l'immobilier",
-    stat: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.purchases])),
-    onlyIf: 1,
+    of: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.purchases])),
+    min: 1,
   },
   {
-    icon: "💸",
+    icon: "banknote",
     label: "Tirelire percée",
-    stat: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.rentPaid])),
-    onlyIf: 1,
+    of: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.rentPaid])),
+    min: 1,
   },
   {
-    icon: "🍀",
+    icon: "cowrie",
     label: "Fils de la chance",
-    stat: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.cardsDrawn])),
-    onlyIf: 1,
+    of: (s) => Object.fromEntries(s.players.map((p) => [p.id, p.stats.cardsDrawn])),
+    min: 1,
   },
 ];
 
-function computeAwards(game: GameState): { icon: string; label: string; name: string }[] {
-  const results: { icon: string; label: string; name: string }[] = [];
+function computeAwards(game: GameState): { icon: IconName; label: string; name: string }[] {
+  const results: { icon: IconName; label: string; name: string }[] = [];
   for (const award of AWARDS) {
-    const values = award.stat(game);
-    const best = Object.entries(values).sort((a, b) => (b[1] as number) - (a[1] as number))[0];
-    if (best && (best[1] as number) >= award.onlyIf) {
+    const values = award.of(game);
+    const best = Object.entries(values).sort((a, b) => b[1] - a[1])[0];
+    if (best && best[1] >= award.min) {
       const player = game.players[Number(best[0])];
       if (player) results.push({ icon: award.icon, label: award.label, name: player.name });
     }
@@ -54,6 +66,7 @@ export function GameOver() {
   const game = useGame((s) => s.game);
   const openSetup = useGame((s) => s.openSetup);
   const goHome = useGame((s) => s.goHome);
+  const compact = useCompact();
   if (!game) return null;
 
   const ranking = [...game.players].sort((a, b) => netWorthOf(game, b) - netWorthOf(game, a));
@@ -61,77 +74,123 @@ export function GameOver() {
   const awards = computeAwards(game);
 
   return (
-    <div className="flex h-full flex-col items-center overflow-y-auto bg-[radial-gradient(120%_90%_at_50%_15%,#16324f_0%,#0e1420_55%,#090d14_100%)] px-6 py-10 text-center">
-      <motion.div
-        initial={{ scale: 0.6, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 200, damping: 15 }}
-        className="mb-2 text-7xl"
-      >
-        🏆
-      </motion.div>
-      <h1 className="mb-1 text-4xl font-black text-amber-300">
-        {winner ? `${winner.name} remporte Dakar !` : "Partie terminée"}
-      </h1>
-      <p className="mb-8 text-slate-400">
-        {ranking.length} patrimoines évalués en {game.turnCount} tours.
-      </p>
-
-      <div className="mb-8 flex w-full max-w-xl flex-col gap-2">
-        {ranking.map((p, i) => (
-          <motion.div
-            key={p.id}
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.12 }}
-            className={`flex items-center justify-between rounded-2xl border px-4 py-3 ${
-              i === 0 ? "border-amber-400/60 bg-amber-400/10" : "border-white/10 bg-[#101a2b]/80"
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-lg">{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}</span>
-              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: p.color }} />
-              <span className="font-bold text-slate-100">{p.name}</span>
-              {p.bankrupt && <span className="text-xs text-red-400">faillite</span>}
-            </div>
-            <div className="flex items-center gap-4 text-sm">
-              <span className="text-slate-400">{ownedPositions(game, p.id).length} biens</span>
-              <span className="font-bold text-emerald-300">{formatMoney(netWorthOf(game, p))}</span>
-            </div>
-          </motion.div>
-        ))}
-      </div>
-
-      {awards.length > 0 && (
-        <div className="mb-8 flex flex-col gap-2">
-          <h2 className="text-lg font-bold text-slate-300">Les prix douteux de la soirée</h2>
-          {awards.map((a, i) => (
+    <div className="mat-felt h-full overflow-hidden">
+      <div className="p-safe h-full">
+        <div className={`scroll-paper h-full overflow-y-auto ${compact ? "px-3 py-3" : "px-6 py-8"}`}>
+          <div className="mx-auto w-[540px] max-w-full">
             <motion.div
-              key={a.label}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.6 + i * 0.15 }}
-              className="rounded-xl border border-white/10 bg-[#101a2b]/80 px-4 py-2 text-sm text-slate-200"
+              initial={{ y: 22, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 180, damping: 22 }}
             >
-              {a.icon} <b>{a.label}</b> — {a.name}
-            </motion.div>
-          ))}
-        </div>
-      )}
+              <Card className={`relative text-center ${compact ? "px-4 pb-4 pt-5" : "px-7 pb-7 pt-8"}`}>
+                {/* Wax seal */}
+                <motion.span
+                  initial={{ scale: 0.4, rotate: -24, opacity: 0 }}
+                  animate={{ scale: 1, rotate: -8, opacity: 1 }}
+                  transition={{ type: "spring", stiffness: 240, damping: 14, delay: 0.15 }}
+                  className={`absolute left-1/2 flex -translate-x-1/2 items-center justify-center rounded-full ${
+                    compact ? "-top-4 h-11 w-11" : "-top-6 h-16 w-16"
+                  }`}
+                  style={{
+                    background: "radial-gradient(circle at 35% 30%, #D98A63 0%, #A84E2B 55%, #7A3419 100%)",
+                    boxShadow: "0 8px 18px -6px rgba(60,25,10,.7), inset 0 2px 4px rgba(255,255,255,.28)",
+                    color: "#F7E3D3",
+                  }}
+                >
+                  <Icon name="crown" size={compact ? 20 : 28} strokeWidth={1.6} />
+                </motion.span>
 
-      <div className="flex gap-3">
-        <button
-          onClick={openSetup}
-          className="rounded-2xl bg-amber-400 px-8 py-3.5 font-bold text-slate-900 transition hover:scale-105 hover:bg-amber-300"
-        >
-          🔁 Revanche !
-        </button>
-        <button
-          onClick={goHome}
-          className="rounded-2xl border border-white/10 px-8 py-3.5 text-slate-300 transition hover:bg-white/5"
-        >
-          Menu
-        </button>
+                <div className={`u-label text-gold-700 ${compact ? "mt-4" : "mt-6"}`}>Fin de partie</div>
+                <h1
+                  className={`u-display mt-1.5 leading-tight text-ink-900 ${
+                    compact ? "text-[21px]" : "text-[28px]"
+                  }`}
+                >
+                  {winner ? `${winner.name} remporte Dakar` : "Match nul"}
+                </h1>
+                <p className={`mt-1 text-ink-500 ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
+                  {game.turnCount} tours joués · {ranking.length} patrimoines évalués
+                </p>
+
+                <BrassRule className={compact ? "my-3" : "my-5"} />
+
+                <div className={`flex flex-col text-left ${compact ? "gap-1" : "gap-1.5"}`}>
+                  {ranking.map((p, i) => (
+                    <motion.div
+                      key={p.id}
+                      initial={{ opacity: 0, x: -14 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.25 + i * 0.09 }}
+                      className={`flex items-center gap-3 rounded-[3px] ${compact ? "px-2 py-1" : "px-3 py-2"}`}
+                      style={{
+                        background: i === 0 ? "rgba(232,162,59,.16)" : "rgba(120,95,60,.07)",
+                        boxShadow:
+                          i === 0
+                            ? "inset 0 0 0 1.5px rgba(168,112,31,.65)"
+                            : "inset 0 0 0 1px rgba(110,86,52,.18)",
+                      }}
+                    >
+                      <span
+                        className="u-label flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px]"
+                        style={
+                          i === 0
+                            ? { background: "linear-gradient(180deg,#f2d69f,#9a6f2c)", color: "#3A2A08" }
+                            : { background: "rgba(110,86,52,.18)", color: "#6B6152" }
+                        }
+                      >
+                        {i + 1}
+                      </span>
+                      <span style={{ color: p.color }} className="shrink-0">
+                        <PawnGlyph pawn={p.pawn} size={compact ? 18 : 22} />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-ink-900">
+                        {p.name}
+                        {p.bankrupt && <span className="ml-2 u-label text-clay-700">Faillite</span>}
+                      </span>
+                      <span className="u-label shrink-0 text-ink-300">
+                        {ownedPositions(game, p.id).length} biens
+                      </span>
+                      <Money amount={netWorthOf(game, p)} className="shrink-0 text-[14px] font-bold text-ink-900" />
+                    </motion.div>
+                  ))}
+                </div>
+
+                {awards.length > 0 && (
+                  <>
+                    <BrassRule className={compact ? "my-3" : "my-5"} />
+                    <Label>Les prix douteux de la soirée</Label>
+                    <div className={`flex flex-col gap-1.5 ${compact ? "mt-1.5" : "mt-2.5"}`}>
+                      {awards.map((a, i) => (
+                        <motion.div
+                          key={a.label}
+                          initial={{ opacity: 0, scale: 0.94 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.6 + i * 0.12 }}
+                          className="flex items-center gap-2.5 rounded-[3px] px-3 py-1.5 text-left"
+                          style={{ boxShadow: "inset 0 0 0 1px rgba(110,86,52,.2)" }}
+                        >
+                          <Icon name={a.icon} size={16} className="shrink-0 text-clay-500" />
+                          <span className="text-[12.5px] font-bold text-ink-900">{a.label}</span>
+                          <span className="ml-auto text-[12.5px] text-ink-500">{a.name}</span>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </Card>
+            </motion.div>
+
+            <div className={`flex justify-center gap-3 ${compact ? "mt-3" : "mt-5"}`}>
+              <Button face="gold" size={compact ? "md" : "lg"} icon="dice" onClick={openSetup}>
+                Revanche
+              </Button>
+              <Button face="bone" size={compact ? "md" : "lg"} icon="arrowLeft" onClick={goHome}>
+                Menu
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

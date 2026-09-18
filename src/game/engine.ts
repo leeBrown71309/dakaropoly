@@ -150,6 +150,12 @@ function payOrDebt(
 }
 
 function sendToJail(s: GameState, events: GameEvent[], player: Player): void {
+  events.push({
+    t: "announce",
+    kind: "jail",
+    title: "Direction Rebeuss",
+    detail: `${player.name} est conduit en prison, sans passer par le Départ`,
+  });
   player.position = 10;
   player.inJail = true;
   player.jailAttempts = 0;
@@ -289,15 +295,23 @@ function resolveTile(s: GameState, events: GameEvent[], rollSum: number): void {
       const owner = s.players[st.owner] as Player;
       const rent = rentFor(s, player.position, rollSum);
       events.push({
-        t: "toast",
-        text: `${player.name} paie ${rent} F de loyer à ${owner.name}`,
-        tone: "bad",
+        t: "announce",
+        kind: "rent",
+        title: tile.name,
+        detail: `${player.name} paie le loyer à ${owner.name}`,
+        amount: rent,
       });
       payOrDebt(s, events, player, rent, owner);
       return;
     }
     case "tax": {
-      events.push({ t: "toast", text: `${tile.name} : payez ${tile.taxAmount} F`, tone: "bad" });
+      events.push({
+        t: "announce",
+        kind: "tax",
+        title: tile.name,
+        detail: `${player.name} doit régler la somme à la banque`,
+        amount: tile.taxAmount ?? 0,
+      });
       payOrDebt(s, events, player, tile.taxAmount ?? 0, null);
       return;
     }
@@ -428,7 +442,12 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
     }
   });
   debtor.bankrupt = true;
-  events.push({ t: "toast", text: `${debtor.name} fait faillite !`, tone: "bad" });
+  events.push({
+    t: "announce",
+    kind: "bankruptcy",
+    title: "Faillite",
+    detail: `${debtor.name} quitte la partie`,
+  });
 }
 
 function validateTrade(s: GameState, player: Player, offer: TradeOffer): void {
@@ -804,7 +823,24 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     default:
       throw new Error("Action inconnue");
   }
+  recordLog(s, events);
   return { state: s, events };
+}
+
+/**
+ * Everything the interface is told, the journal keeps. Deriving the log from
+ * the emitted events means a new announcement is recorded automatically,
+ * instead of relying on every call site remembering to log as well.
+ */
+function recordLog(s: GameState, events: GameEvent[]): void {
+  for (const ev of events) {
+    if (ev.t === "toast") {
+      addLog(s, ev.text);
+    } else if (ev.t === "announce") {
+      const amount = ev.amount === undefined ? "" : ` — ${ev.amount} F`;
+      addLog(s, `${ev.detail}${amount}`);
+    }
+  }
 }
 
 function nextOfKind(from: number, positions: number[]): number {
@@ -870,6 +906,7 @@ function sellHouse(s: GameState, events: GameEvent[], player: Player, pos: numbe
   st.houses -= 1;
   player.money += refund;
   events.push({ t: "money", player: player.id, amount: refund });
+  events.push({ t: "sound", name: "sell" });
   addLog(s, `${player.name} vend un bâtiment sur ${tile.name} (+${refund} F)`);
 }
 

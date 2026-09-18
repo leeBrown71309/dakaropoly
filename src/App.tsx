@@ -3,8 +3,9 @@ import { Home } from "./ui/screens/Home";
 import { Setup } from "./ui/screens/Setup";
 import { GameScreen } from "./ui/screens/GameScreen";
 import { GameOver } from "./ui/screens/GameOver";
+import { RotateGate } from "./ui/screens/RotateGate";
 
-export function App() {
+function Screen() {
   const screen = useGame((s) => s.screen);
   switch (screen) {
     case "setup":
@@ -16,4 +17,14 @@ export function App() {
     default:
       return <Home />;
   }
+}
+
+export function App() {
+  return (
+    <>
+      <Screen />
+      {/* Sits above every screen: the board is unplayable upright wherever you are. */}
+      <RotateGate />
+    </>
+  );
 }

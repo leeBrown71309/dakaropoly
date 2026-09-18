@@ -1,119 +1,220 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import * as THREE from "three";
 import { BOARD } from "../game/data/board";
 import type { TileDef } from "../game/types";
-import { tileCenter, SIDE_LAYOUT } from "./geometry";
-import { tileLabelTexture, iconLabelTexture, deckTexture, centerLogoTexture } from "./textures";
 import { useGame } from "../game/store";
+import { createBoardTexture } from "./boardTexture";
+import { deckTexture } from "./textures";
+import {
+  HALF,
+  RING,
+  BAND_DEPTH,
+  BOARD_GROUP_Y,
+  BOARD_SURFACE_H,
+  tileCell,
+  bandCenter,
+  OUTWARD,
+  housesAxis,
+} from "./geometry";
 
-const GROUP_COLORS: Record<string, string> = {
-  brown: "#96613A",
-  lightblue: "#7CC4E8",
-  pink: "#D957A4",
-  orange: "#F59331",
-  red: "#E14B4B",
-  yellow: "#F2C744",
-  green: "#3AA65C",
-  darkblue: "#2F5D9E",
-};
+/** Width of the wooden frame around the printed surface. */
+const FRAME_LIP = 0.62;
+const FRAME_H = 0.52;
 
-const CORNER_ICON: Record<string, string> = {
-  go: "🏁",
-  jail: "🔒",
-  free: "🅿️",
-  "goto-jail": "👮",
-  chance: "🍀",
-  chest: "🤝",
-  tax: "💸",
-};
+/**
+ * A little house: a square block with a gable, extruded once and shared by
+ * every tile rather than being yet another cube.
+ */
+const HOUSE_GEOMETRY = (() => {
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.5, -0.5);
+  shape.lineTo(0.5, -0.5);
+  shape.lineTo(0.5, 0.18);
+  shape.lineTo(0, 0.5);
+  shape.lineTo(-0.5, 0.18);
+  shape.closePath();
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.82,
+    bevelEnabled: true,
+    bevelThickness: 0.05,
+    bevelSize: 0.045,
+    bevelSegments: 2,
+  });
+  geo.rotateX(-Math.PI / 2);
+  geo.center();
+  return geo;
+})();
 
-function TileMesh({ pos }: { pos: number }) {
-  const geo = useMemo(() => tileCenter(pos), [pos]);
-  const tile = BOARD[pos] as TileDef;
-  const st = useGame((s) => (s.game ? s.game.tiles[pos] : undefined));
-  const players = useGame((s) => s.game?.players);
-  const ownerColor = st && st.owner !== null && players ? (players[st.owner]?.color ?? null) : null;
-  const houses = st?.houses ?? 0;
+/** Regenerates the printed surface once webfonts are available. */
+function useBoardTexture(): THREE.CanvasTexture {
+  const [generation, setGeneration] = useState(0);
 
-  const layout = SIDE_LAYOUT[geo.side];
-  const bandColor = tile.group ? GROUP_COLORS[tile.group] : null;
-  const isCorner = tile.kind === "go" || tile.kind === "jail" || tile.kind === "free" || tile.kind === "goto-jail";
+  useEffect(() => {
+    let cancelled = false;
+    void document.fonts.ready.then(() => {
+      if (!cancelled) setGeneration((g) => g + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const houseSpread = houses < 5 ? [-0.27, -0.09, 0.09, 0.27].slice(0, houses) : [];
+  const texture = useMemo(() => createBoardTexture(), [generation]);
+
+  useEffect(() => () => texture.dispose(), [texture]);
+  return texture;
+}
+
+function Surface() {
+  const texture = useBoardTexture();
+
+  const materials = useMemo(() => {
+    const edge = new THREE.MeshStandardMaterial({ color: "#E0D0AE", roughness: 0.92 });
+    const top = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.88 });
+    return [edge, edge, top, edge, edge, edge];
+  }, [texture]);
+
+  useEffect(
+    () => () => {
+      materials[0]?.dispose();
+      materials[2]?.dispose();
+    },
+    [materials],
+  );
 
   return (
-    <group position={[geo.x, 0, geo.z]}>
-      <mesh receiveShadow castShadow position={[0, 0.06, 0]}>
-        <boxGeometry args={layout.dims} />
-        <meshStandardMaterial color="#f2e9d8" roughness={0.9} />
+    <mesh position={[0, BOARD_SURFACE_H / 2, 0]} receiveShadow castShadow material={materials}>
+      <boxGeometry args={[HALF * 2, BOARD_SURFACE_H, HALF * 2]} />
+    </mesh>
+  );
+}
+
+function Frame() {
+  const outer = HALF * 2 + FRAME_LIP * 2;
+  return (
+    <group>
+      {/* Lacquered frame the printed sheet is inlaid into */}
+      <mesh position={[0, -FRAME_H / 2 + BOARD_SURFACE_H * 0.55, 0]} receiveShadow castShadow>
+        <boxGeometry args={[outer, FRAME_H, outer]} />
+        <meshStandardMaterial color="#5C3A1F" roughness={0.58} metalness={0.06} />
       </mesh>
-      {bandColor !== null && (
-        <mesh position={[layout.band[0], 0.09, layout.band[1]]} receiveShadow castShadow>
-          <boxGeometry args={layout.bandSize} />
-          <meshStandardMaterial color={ownerColor ?? bandColor} roughness={0.65} />
-        </mesh>
-      )}
-      {isCorner ? (
-        <mesh position={[0, 0.125, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[1.6, 1.0]} />
-          <meshBasicMaterial map={iconLabelTexture(CORNER_ICON[tile.kind] ?? "", tile.name)} transparent />
-        </mesh>
-      ) : (
-        <mesh position={[layout.label[0], 0.125, layout.label[1]]} rotation={[-Math.PI / 2, 0, layout.labelRot]}>
-          <planeGeometry args={[0.92, 0.55]} />
-          <meshBasicMaterial map={tileLabelTexture(tile.name, tile.price)} transparent />
-        </mesh>
-      )}
-      {ownerColor !== null && (
-        <mesh position={[layout.anchor[0], 0.13, layout.anchor[1]]} rotation={[-Math.PI / 2, 0, 0]}>
-          <circleGeometry args={[0.09, 16]} />
-          <meshBasicMaterial color={ownerColor} />
-        </mesh>
-      )}
-      {houses > 0 && houses < 5 && (
-        <group position={[layout.houses[0], 0.18, layout.houses[1]]}>
-          {houseSpread.map((offset, i) => (
-            <mesh key={i} position={layout.housesAxis === "x" ? [offset, 0, 0] : [0, 0, offset]} castShadow>
-              <boxGeometry args={[0.13, 0.13, 0.13]} />
-              <meshStandardMaterial color="#2f9e4f" roughness={0.5} />
-            </mesh>
-          ))}
-        </group>
-      )}
-      {houses === 5 && (
-        <mesh position={[layout.houses[0], 0.2, layout.houses[1]]} castShadow>
-          <boxGeometry args={[0.46, 0.2, 0.32]} />
-          <meshStandardMaterial color="#c92a2a" roughness={0.5} />
-        </mesh>
-      )}
-      {st?.mortgaged && (
-        <mesh position={[0, 0.131, layout.label[1] * 0.5]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[0.8, 0.4]} />
-          <meshBasicMaterial color="#8b1a1a" transparent opacity={0.35} />
-        </mesh>
-      )}
     </group>
   );
 }
 
-function CenterPiece() {
+function OwnerMark({ pos, color }: { pos: number; color: string }) {
+  const cell = tileCell(pos);
+  const [ox, oz] = OUTWARD[cell.side];
+  const inset = RING / 2 - 0.055;
+  const along = cell.side === 0 || cell.side === 2 ? cell.w : cell.d;
+
+  return (
+    <mesh
+      position={[cell.x + ox * inset, BOARD_SURFACE_H + 0.012, cell.z + oz * inset]}
+      castShadow
+    >
+      <boxGeometry
+        args={ox === 0 ? [along * 0.86, 0.024, 0.08] : [0.08, 0.024, along * 0.86]}
+      />
+      <meshStandardMaterial color={color} roughness={0.42} metalness={0.12} />
+    </mesh>
+  );
+}
+
+function Buildings({ pos, houses }: { pos: number; houses: number }) {
+  const cell = tileCell(pos);
+  const [bx, bz] = bandCenter(pos);
+  const axis = housesAxis(cell.side);
+
+  if (houses === 5) {
+    return (
+      <mesh
+        position={[bx, BOARD_SURFACE_H + 0.09, bz]}
+        rotation={[0, axis === "x" ? 0 : Math.PI / 2, 0]}
+        castShadow
+        receiveShadow
+      >
+        <boxGeometry args={[0.46, 0.17, BAND_DEPTH * 0.62]} />
+        <meshStandardMaterial color="#B23A2E" roughness={0.45} />
+      </mesh>
+    );
+  }
+
+  const offsets = [-0.27, -0.09, 0.09, 0.27].slice(0, houses);
+  return (
+    <group>
+      {offsets.map((offset, i) => (
+        <mesh
+          key={i}
+          position={[
+            bx + (axis === "x" ? offset : 0),
+            BOARD_SURFACE_H + 0.075,
+            bz + (axis === "z" ? offset : 0),
+          ]}
+          rotation={[0, axis === "x" ? 0 : Math.PI / 2, 0]}
+          scale={[0.16, 0.16, 0.16]}
+          geometry={HOUSE_GEOMETRY}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#2F7D50" roughness={0.5} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function MortgageMark({ pos }: { pos: number }) {
+  const cell = tileCell(pos);
+  return (
+    <mesh position={[cell.x, BOARD_SURFACE_H + 0.006, cell.z]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[cell.w * 0.94, cell.d * 0.94]} />
+      <meshBasicMaterial color="#8E4526" transparent opacity={0.3} />
+    </mesh>
+  );
+}
+
+function TileOverlay({ pos }: { pos: number }) {
+  const tile = BOARD[pos] as TileDef;
+  const state = useGame((s) => s.game?.tiles[pos]);
+  const ownerColor = useGame((s) => {
+    const owner = s.game?.tiles[pos]?.owner;
+    return owner === undefined || owner === null ? null : (s.game?.players[owner]?.color ?? null);
+  });
+
+  if (!state) return null;
+  const houses = tile.kind === "street" ? state.houses : 0;
+
+  return (
+    <group>
+      {ownerColor && <OwnerMark pos={pos} color={ownerColor} />}
+      {houses > 0 && <Buildings pos={pos} houses={houses} />}
+      {state.mortgaged && <MortgageMark pos={pos} />}
+    </group>
+  );
+}
+
+/** The two card decks, sitting on the centre field. */
+function Decks() {
   const decks = useMemo(
     () => [
-      { x: -1.75, z: -1.7, rot: -0.25, tex: deckTexture("BARAKA !", "#f59e0b", "#3a2400") },
-      { x: 1.75, z: -1.7, rot: 0.25, tex: deckTexture("TERANGA", "#e9dfc8", "#5a4a22") },
+      { x: -2.35, z: -2.55, rot: -0.19, tex: deckTexture("Baraka", "#E8A23B", "#3E2A0C") },
+      { x: 2.35, z: -2.55, rot: 0.17, tex: deckTexture("Teranga", "#F1E7D2", "#23372F") },
     ],
     [],
   );
+
   return (
     <group>
-      {decks.map((d, i) => (
-        <group key={i} position={[d.x, 0, d.z]} rotation={[0, d.rot, 0]}>
-          <mesh receiveShadow position={[0, 0.1, 0]}>
-            <boxGeometry args={[1.5, 0.08, 0.85]} />
-            <meshStandardMaterial color="#d9cfb6" roughness={0.9} />
+      {decks.map((deck, i) => (
+        <group key={i} position={[deck.x, BOARD_SURFACE_H, deck.z]} rotation={[0, deck.rot, 0]}>
+          <mesh position={[0, 0.045, 0]} castShadow receiveShadow>
+            <boxGeometry args={[1.45, 0.09, 0.95]} />
+            <meshStandardMaterial color="#D9CBAC" roughness={0.9} />
           </mesh>
-          <mesh position={[0, 0.142, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-            <planeGeometry args={[1.44, 0.8]} />
-            <meshBasicMaterial map={d.tex} transparent />
+          <mesh position={[0, 0.0905, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[1.4, 0.9]} />
+            <meshBasicMaterial map={deck.tex} transparent />
           </mesh>
         </group>
       ))}
@@ -123,23 +224,13 @@ function CenterPiece() {
 
 export function BoardMesh() {
   return (
-    <group position={[0, -0.4, 0]}>
-      <mesh receiveShadow castShadow position={[0, -0.2, 0]}>
-        <boxGeometry args={[13.5, 0.5, 13.5]} />
-        <meshStandardMaterial color="#20624a" roughness={0.85} />
-      </mesh>
-      <mesh receiveShadow position={[0, 0.051, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[8.8, 8.8]} />
-        <meshStandardMaterial color="#1a5240" roughness={0.95} />
-      </mesh>
-      <mesh position={[0, 0.125, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[6.2, 6.2]} />
-        <meshBasicMaterial map={centerLogoTexture()} transparent />
-      </mesh>
+    <group position={[0, BOARD_GROUP_Y, 0]}>
+      <Frame />
+      <Surface />
+      <Decks />
       {BOARD.map((_, pos) => (
-        <TileMesh key={pos} pos={pos} />
+        <TileOverlay key={pos} pos={pos} />
       ))}
-      <CenterPiece />
     </group>
   );
 }

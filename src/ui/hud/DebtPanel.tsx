@@ -1,12 +1,24 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
-import { formatMoney } from "../../game/types";
+import { useCompact } from "../useViewport";
+import { decisionAnchor } from "./anchor";
 import { netWorthOf } from "../../game/selectors";
+import { Card, Label, BrassRule } from "../kit/Surface";
+import { Button } from "../kit/Button";
+import { Money } from "../kit/Money";
+import { Icon } from "../icons/Icon";
 
+/** A bank notice of unpaid debt, rubber-stamped across the face. */
 export function DebtPanel() {
   const game = useGame((s) => s.game);
   const dispatch = useGame((s) => s.dispatch);
-  if (!game || game.phase !== "debt" || !game.debt) return null;
+  // Wait for the event queue to drain, so the card never arrives before
+  // the token it describes.
+  const animating = useGame((s) => s.animating);
+  const toggleManage = useGame((s) => s.toggleManage);
+  const compact = useCompact();
+  if (animating || !game || game.phase !== "debt" || !game.debt) return null;
+
   const debt = game.debt;
   const player = game.players[game.current];
   if (!player) return null;
@@ -15,36 +27,90 @@ export function DebtPanel() {
 
   return (
     <motion.div
-      initial={{ y: 40, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      className="absolute bottom-28 left-1/2 z-30 w-[380px] -translate-x-1/2 rounded-2xl border border-red-400/50 bg-[#1c1016]/93 p-4 backdrop-blur-md"
+      initial={{ x: 60, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 320, damping: 30 }}
+      className={decisionAnchor(compact)}
     >
-      <h3 className="mb-1 text-lg font-bold text-red-300">⚠️ Dettes</h3>
-      <p className="mb-1 text-sm text-slate-300">
-        {player.name} doit {formatMoney(debt.amount)} à {creditor ? creditor.name : "la banque"}.
-      </p>
-      <p className="mb-3 text-xs text-slate-500">
-        Fonds : {formatMoney(player.money)} · Patrimoine : {formatMoney(netWorthOf(game, player))}
-      </p>
-      <div className="flex gap-2">
-        <button
+      <Card className="relative overflow-hidden">
+        <div
+          className={`flex items-center gap-2 ${compact ? "px-2.5 py-1.5" : "px-3.5 py-2"}`}
+          style={{
+            backgroundColor: "#8E4526",
+            color: "#FBEDEB",
+            boxShadow: "inset 0 -2px 6px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.2)",
+          }}
+        >
+          <Icon name="warning" size={16} />
+          <span className="u-label">Avis de dette</span>
+        </div>
+
+        {/* Rubber stamp */}
+        <span
+          className="pointer-events-none absolute right-3 top-16 -rotate-[14deg] select-none rounded-[3px] border-[2.5px] px-2 py-0.5"
+          style={{ borderColor: "rgba(142,69,38,.45)", color: "rgba(142,69,38,.45)" }}
+        >
+          <span className="u-label text-[13px] tracking-[0.2em]">Impayé</span>
+        </span>
+
+        <div className={compact ? "px-2.5 py-2" : "px-3.5 py-3"}>
+          <Label>Somme exigible</Label>
+          <div className="mt-1">
+            <Money
+              amount={debt.amount}
+              className={`u-display leading-none text-clay-700 ${compact ? "text-[23px]" : "text-[30px]"}`}
+            />
+          </div>
+          <p className={`mt-1.5 leading-snug text-ink-700 ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
+            <span className="font-bold">{player.name}</span> doit cette somme à{" "}
+            <span className="font-bold">{creditor ? creditor.name : "la banque"}</span>.
+          </p>
+
+          <BrassRule className={compact ? "my-1.5" : "my-2.5"} />
+
+          <div className={`flex justify-between ${compact ? "text-[10.5px]" : "text-[11.5px]"}`}>
+            <span className="text-ink-500">
+              Liquide <Money amount={player.money} className="font-bold text-ink-900" />
+            </span>
+            <span className="text-ink-500">
+              Patrimoine <Money amount={netWorthOf(game, player)} className="font-bold text-ink-900" />
+            </span>
+          </div>
+        </div>
+      </Card>
+
+      <div className="mt-1.5 flex gap-1.5">
+        <Button
+          face="teal"
+          size={compact ? "sm" : "md"}
+          icon="coins"
+          block
           disabled={!canPay}
           onClick={() => dispatch({ t: "pay-debt" })}
-          className="flex-1 rounded-xl bg-emerald-500 px-4 py-3 font-bold text-emerald-950 hover:bg-emerald-400 disabled:opacity-40"
         >
-          Payer maintenant
-        </button>
-        <button
+          Régler
+        </Button>
+        <Button
+          face="clay"
+          size={compact ? "sm" : "md"}
+          icon="flag"
+          block
           onClick={() => dispatch({ t: "declare-bankruptcy" })}
-          className="flex-1 rounded-xl bg-red-600 px-4 py-3 font-bold text-white hover:bg-red-500"
         >
-          🏴 Déclarer faillite
-        </button>
+          Faillite
+        </Button>
       </div>
+
       {!canPay && (
-        <p className="mt-2 text-center text-xs text-slate-500">
-          Pas assez de fonds — vendez des bâtiments / hypothéquez via le patrimoine.
-        </p>
+        <button
+          type="button"
+          onClick={toggleManage}
+          className={`mt-1.5 w-full text-center font-semibold leading-snug text-gold-300 underline decoration-gold-700 underline-offset-2 hover:text-gold-500 ${
+            compact ? "text-[10.5px]" : "text-[11.5px]"
+          }`}
+        >
+          Vendre des bâtiments ou hypothéquer pour réunir la somme
+        </button>
       )}
     </motion.div>
   );

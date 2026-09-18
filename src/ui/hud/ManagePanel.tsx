@@ -1,134 +1,251 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
-import { BOARD } from "../../game/data/board";
-import { GROUP_COLORS, GROUP_NAMES } from "../../game/colors";
-import { formatMoney } from "../../game/types";
-import { canBuildOn, canMortgage, canSellHouseOn, canUnmortgage, houseRefund, mortgageValue, unmortgageCost } from "../../game/selectors";
+import { useCompact } from "../useViewport";
+import { BOARD, GROUP_MEMBERS, GROUP_ORDER } from "../../game/data/board";
+import { GROUP_COLORS, GROUP_NAMES, GROUP_ON_COLOR } from "../../game/colors";
+import {
+  canBuildOn,
+  canMortgage,
+  canSellHouseOn,
+  canUnmortgage,
+  houseRefund,
+  mortgageValue,
+  ownedPositions,
+  unmortgageCost,
+} from "../../game/selectors";
+import type { ColorGroup, Player } from "../../game/types";
+import { Card, Label, BrassRule } from "../kit/Surface";
+import { Button, Fitting } from "../kit/Button";
+import { Money } from "../kit/Money";
+import { Icon } from "../icons/Icon";
 
 export function ManagePanel() {
   const game = useGame((s) => s.game);
   const manageOpen = useGame((s) => s.manageOpen);
   const toggleManage = useGame((s) => s.toggleManage);
-  const dispatch = useGame((s) => s.dispatch);
-  const [playerId, setPlayerId] = useState<number | null>(null);
+  const compact = useCompact();
+  const [viewedId, setViewedId] = useState<number | null>(null);
 
   if (!game) return null;
-  const player = game.players[playerId ?? game.current] ?? null;
+  const player: Player | undefined = game.players[viewedId ?? game.current];
   if (!player) return null;
 
-  const groups: Record<string, number[]> = {};
-  BOARD.forEach((tile, pos) => {
-    if (tile.group && game.tiles[pos]?.owner === player.id) {
-      groups[tile.group] = [...(groups[tile.group] ?? []), pos];
-    }
-  });
-  const others = BOARD.map((_, pos) => pos).filter(
-    (pos) => game.tiles[pos]?.owner === player.id && !BOARD[pos]?.group,
-  );
+  const ownedGroups = GROUP_ORDER.map((group) => ({
+    group,
+    positions: GROUP_MEMBERS[group].filter((pos) => game.tiles[pos]?.owner === player.id),
+  })).filter((entry) => entry.positions.length > 0);
+
+  const utilities = ownedPositions(game, player.id).filter((pos) => BOARD[pos]?.group === undefined);
+  const empty = ownedGroups.length === 0 && utilities.length === 0;
 
   return (
-    <>
-      <button
-        onClick={toggleManage}
-        className="absolute right-3 top-14 z-30 rounded-xl border border-white/10 bg-[#101a2b]/80 px-3 py-2 text-sm text-slate-200 backdrop-blur-md hover:bg-white/10"
-      >
-        🏠 Patrimoine
-      </button>
+    <AnimatePresence>
       {manageOpen && (
-        <motion.div
-          initial={{ x: 320 }}
+        <motion.aside
+          initial={{ x: 340 }}
           animate={{ x: 0 }}
-          exit={{ x: 320 }}
-          transition={{ type: "spring", stiffness: 300, damping: 30 }}
-          className="absolute right-3 top-14 z-30 max-h-[70vh] w-80 overflow-y-auto rounded-2xl border border-white/10 bg-[#101a2b]/90 p-4 backdrop-blur-md"
+          exit={{ x: 340 }}
+          transition={{ type: "spring", stiffness: 340, damping: 34 }}
+          className={`pointer-events-auto absolute right-0 z-40 flex flex-col ${
+            compact ? "bottom-[54px] top-1 w-[282px]" : "bottom-24 top-14 w-[324px]"
+          }`}
         >
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-bold text-slate-100">Patrimoine</h3>
-            <div className="text-xs text-slate-400">{formatMoney(player.money)}</div>
-          </div>
-          <select
-            value={player.id}
-            onChange={(e) => setPlayerId(Number(e.target.value))}
-            className="mb-3 w-full rounded-lg border border-white/10 bg-black/25 px-2 py-1.5 text-sm text-slate-200"
-          >
-            {game.players.filter((p) => !p.bankrupt).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          {Object.entries(groups).length === 0 && others.length === 0 && (
-            <p className="text-sm text-slate-500">Aucun bien.</p>
-          )}
-          {Object.entries(groups).map(([group, positions]) => (
-            <div key={group} className="mb-4">
-              <div
-                className="mb-1 inline-block rounded px-2 py-0.5 text-xs font-bold text-slate-900"
-                style={{ backgroundColor: GROUP_COLORS[group] }}
-              >
-                {GROUP_NAMES[group]}
+          <Card className="flex min-h-0 flex-1 flex-col rounded-r-none border-r-0">
+            <header
+              className={`flex items-center gap-2 ${compact ? "px-2.5 pb-1 pt-1.5" : "px-3 pb-2 pt-2.5"}`}
+            >
+              <Icon name="deed" size={compact ? 15 : 17} className="text-ink-700" />
+              <span className={`u-display text-ink-900 ${compact ? "text-[13px]" : "text-[15px]"}`}>
+                Patrimoine
+              </span>
+              <Fitting icon="close" label="Fermer" className="ml-auto !h-7 !w-7" onClick={toggleManage} />
+            </header>
+
+            <div className={`flex items-center gap-2 ${compact ? "px-2.5 pb-1.5" : "px-3 pb-2"}`}>
+              <div className="relative flex-1">
+                <select
+                  value={player.id}
+                  onChange={(e) => setViewedId(Number(e.target.value))}
+                  className="field appearance-none py-1.5 pr-8 text-[12.5px]"
+                >
+                  {game.players
+                    .filter((p) => !p.bankrupt)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+                <Icon
+                  name="chevronDown"
+                  size={14}
+                  className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-500"
+                />
               </div>
-              <div className="flex flex-col gap-2">
-                {positions.map((pos) => {
-                  const tile = BOARD[pos];
-                  const st = game.tiles[pos];
-                  if (!tile || !st) return null;
-                  const st2 = st;
-                  return (
-                    <div key={pos} className="rounded-xl border border-white/10 bg-black/20 p-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="font-semibold text-slate-100">{tile.name}</span>
-                        <span className="text-slate-400">
-                          {st2.mortgaged ? "🔒 hypothèque" : st2.houses === 5 ? "🏨 hôtel" : st2.houses > 0 ? `${st2.houses} 🏠` : ""}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        <button
-                          onClick={() => dispatch({ t: "build", pos })}
-                          disabled={canBuildOn(game, player, pos) !== null}
-                          title={canBuildOn(game, player, pos) ?? "Construire"}
-                          className="rounded bg-emerald-600/80 px-2 py-1 text-xs font-semibold text-white disabled:opacity-30"
-                        >
-                          + 🏠 {tile.houseCost}
-                        </button>
-                        <button
-                          onClick={() => dispatch({ t: "sell-house", pos })}
-                          disabled={canSellHouseOn(game, player, pos) !== null}
-                          className="rounded bg-white/10 px-2 py-1 text-xs text-slate-200 disabled:opacity-30"
-                        >
-                          − 🏠 +{houseRefund(pos)}
-                        </button>
-                        {!st2.mortgaged ? (
-                          <button
-                            onClick={() => dispatch({ t: "mortgage", pos })}
-                            disabled={canMortgage(game, player, pos) !== null}
-                            title={canMortgage(game, player, pos) ?? "Hypothéquer"}
-                            className="rounded bg-amber-600/70 px-2 py-1 text-xs font-semibold text-white disabled:opacity-30"
-                          >
-                            Hypo. +{mortgageValue(pos)}
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => dispatch({ t: "unmortgage", pos })}
-                            disabled={canUnmortgage(game, player, pos) !== null}
-                            className="rounded bg-sky-600/70 px-2 py-1 text-xs font-semibold text-white disabled:opacity-30"
-                          >
-                            Lever −{unmortgageCost(pos)}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <Money amount={player.money} className="text-[14px] font-bold text-ink-900" />
             </div>
-          ))}
-          <div className="mt-3 border-t border-white/10 pt-2 text-xs text-slate-500">
-            Banque : {game.houseStock} 🏠 · {game.hotelStock} 🏨
-          </div>
-        </motion.div>
+
+            <BrassRule />
+
+            <div
+              className={`scroll-paper min-h-0 flex-1 overflow-y-auto ${
+                compact ? "px-2.5 py-1.5" : "px-3 py-2.5"
+              }`}
+            >
+              {empty && (
+                <p className="py-6 text-center text-[12.5px] italic text-ink-300">
+                  Aucun bien au portefeuille.
+                </p>
+              )}
+
+              {ownedGroups.map(({ group, positions }) => (
+                <section key={group} className="mb-3">
+                  <div
+                    className="mb-1 inline-flex items-center gap-1.5 rounded-[2px] px-2 py-[3px]"
+                    style={{ backgroundColor: GROUP_COLORS[group], color: GROUP_ON_COLOR[group] }}
+                  >
+                    <span className="u-label">{GROUP_NAMES[group]}</span>
+                    <span className="u-label opacity-70">
+                      {positions.length}/{GROUP_MEMBERS[group].length}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {positions.map((pos) => (
+                      <PropertyRow key={pos} pos={pos} player={player} group={group} />
+                    ))}
+                  </div>
+                </section>
+              ))}
+
+              {utilities.length > 0 && (
+                <section className="mb-2">
+                  <div className="mb-1 inline-flex rounded-[2px] bg-ink-700 px-2 py-[3px] text-sand-100">
+                    <span className="u-label">Gares & services</span>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    {utilities.map((pos) => (
+                      <PropertyRow key={pos} pos={pos} player={player} />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
+
+            <BrassRule />
+
+            <footer className={`flex items-center justify-between ${compact ? "px-2.5 py-1" : "px-3 py-2"}`}>
+              <Label>Réserve de la banque</Label>
+              <span className="flex items-center gap-3 text-[12px] font-bold text-ink-700">
+                <span className="flex items-center gap-1">
+                  <Icon name="house" size={14} className="text-teal-500" />
+                  {game.houseStock}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Icon name="hotel" size={14} className="text-clay-500" />
+                  {game.hotelStock}
+                </span>
+              </span>
+            </footer>
+          </Card>
+        </motion.aside>
       )}
-    </>
+    </AnimatePresence>
+  );
+}
+
+function PropertyRow({ pos, player, group }: { pos: number; player: Player; group?: ColorGroup }) {
+  const game = useGame((s) => s.game);
+  const dispatch = useGame((s) => s.dispatch);
+  if (!game) return null;
+  const tile = BOARD[pos];
+  const state = game.tiles[pos];
+  if (!tile || !state) return null;
+
+  const buildBlock = canBuildOn(game, player, pos);
+  const sellBlock = canSellHouseOn(game, player, pos);
+  const mortgageBlock = canMortgage(game, player, pos);
+  const unmortgageBlock = canUnmortgage(game, player, pos);
+  const isOwnTurn = game.current === player.id;
+
+  return (
+    <div
+      className="rounded-[3px] px-2 py-1.5"
+      style={{
+        background: state.mortgaged ? "rgba(142,69,38,.10)" : "rgba(120,95,60,.07)",
+        boxShadow: "inset 0 0 0 1px rgba(110,86,52,.18)",
+      }}
+    >
+      <div className="flex items-center gap-1.5">
+        {group && (
+          <span className="h-3.5 w-[3px] rounded-[1px]" style={{ backgroundColor: GROUP_COLORS[group] }} />
+        )}
+        <span className="truncate text-[12.5px] font-bold text-ink-900">{tile.name}</span>
+
+        <span className="ml-auto flex items-center gap-0.5">
+          {state.mortgaged ? (
+            <Icon name="lock" size={13} className="text-clay-700" />
+          ) : state.houses === 5 ? (
+            <Icon name="hotel" size={14} className="text-clay-500" />
+          ) : (
+            Array.from({ length: state.houses }).map((_, i) => (
+              <Icon key={i} name="house" size={12} className="text-teal-500" />
+            ))
+          )}
+        </span>
+      </div>
+
+      {isOwnTurn && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {tile.kind === "street" && (
+            <>
+              <Button
+                face="teal"
+                size="sm"
+                icon="hammer"
+                title={buildBlock ?? "Construire"}
+                disabled={buildBlock !== null}
+                onClick={() => dispatch({ t: "build", pos })}
+              >
+                <Money amount={tile.houseCost ?? 0} />
+              </Button>
+              <Button
+                face="bone"
+                size="sm"
+                icon="minus"
+                title={sellBlock ?? "Vendre un bâtiment"}
+                disabled={sellBlock !== null}
+                onClick={() => dispatch({ t: "sell-house", pos })}
+              >
+                <Money amount={houseRefund(pos)} signed />
+              </Button>
+            </>
+          )}
+          {!state.mortgaged ? (
+            <Button
+              face="slate"
+              size="sm"
+              icon="lock"
+              title={mortgageBlock ?? "Hypothéquer"}
+              disabled={mortgageBlock !== null}
+              onClick={() => dispatch({ t: "mortgage", pos })}
+            >
+              <Money amount={mortgageValue(pos)} signed />
+            </Button>
+          ) : (
+            <Button
+              face="gold"
+              size="sm"
+              icon="key"
+              title={unmortgageBlock ?? "Lever l'hypothèque"}
+              disabled={unmortgageBlock !== null}
+              onClick={() => dispatch({ t: "unmortgage", pos })}
+            >
+              <Money amount={-unmortgageCost(pos)} signed />
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
