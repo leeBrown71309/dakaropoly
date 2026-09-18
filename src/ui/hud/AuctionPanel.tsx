@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn } from "../useTurn";
 import { decisionAnchor } from "./anchor";
 import { TitleDeed } from "../kit/TitleDeed";
 import { Button } from "../kit/Button";
@@ -18,6 +19,7 @@ export function AuctionPanel() {
   // the token it describes.
   const animating = useGame((s) => s.animating);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
   if (animating || !game || game.phase !== "auction" || !game.auction) return null;
 
   const auction = game.auction;
@@ -67,7 +69,7 @@ export function AuctionPanel() {
         )}
       </div>
 
-      {bidder ? (
+      {bidder && myTurn ? (
         <>
           <div className={`flex items-center gap-2 px-0.5 ${compact ? "mt-1.5" : "mt-2"}`}>
             <PlayerMark player={bidder} size={compact ? 16 : 20} />
@@ -110,6 +112,10 @@ export function AuctionPanel() {
             Se retirer
           </Button>
         </>
+      ) : bidder ? (
+        <p className="mt-2 text-center text-[12px] font-semibold text-sand-300">
+          {bidder.name} enchérit…
+        </p>
       ) : (
         <p className="mt-2 text-center text-[12px] font-semibold text-sand-300">Adjudication…</p>
       )}

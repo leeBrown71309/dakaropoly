@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Dakaropoly** — a full 3D Monopoly played in the browser, with a Dakar (Senegal) board. Hot-seat only: 2–8 players share one screen, one turn at a time. Official Monopoly rules (mandatory auctions, even building, limited bank stock, mortgages, jail, trades, bankruptcy). Personal project, not commercial.
+**Dakaropoly** — a full 3D Monopoly played in the browser, with a Dakar (Senegal) board. 2–8 players, either hot-seat on one screen or online with a room code, one turn at a time. Official Monopoly rules (mandatory auctions, even building, limited bank stock, mortgages, jail, trades, bankruptcy). Personal project, not commercial.
 
 `README.md` and `HANDOFF.md` (both in French) describe the board, the rules covered, what is done, and what remains. Read `HANDOFF.md` before picking up unfinished work.
 
@@ -14,6 +14,7 @@ Package manager is **bun**.
 
 ```bash
 bun install
+cp .env.example .env.local   # online mode; the game runs fine without it
 bun run dev        # http://localhost:5173
 bun run typecheck  # tsc --noEmit
 bun run test       # vitest run (engine + dice physics)
@@ -99,6 +100,43 @@ A phone held in landscape is the smallest board the game supports: roughly 740×
 - Never put Tailwind padding utilities on a `.p-safe` element: utilities sit in a later cascade layer and would win.
 - Compact is not only smaller type. The camera pulls back (`COMPACT_VIEW`), the zoom buttons fold into the rail as a single recentre because pinching already zooms, the decision panels hang from the top and scroll instead of centring (`decisionAnchor`), the roster becomes two columns, and the renderer drops to a 1024 shadow map with no MSAA.
 - `installAudioUnlock()` in `main.tsx` opens the audio context on the first gesture. Without it iOS plays the whole game in silence, because sounds are fired from the event queue long after the tap that caused them.
+
+### Online play — `src/net/`
+
+A room is a code, a Supabase Realtime channel and one row holding the state.
+
+- **Actions are relayed, not states.** Every client runs the same pure engine
+  over the same seeded randomness, so replaying the sequence lands them all on
+  the same board *and* regenerates the events that animate it — which shipping
+  a snapshot could never do. Dice cost nothing extra: the physics seed is
+  derived from `(a, b, turnCount)`.
+- **Nothing is applied where it is played.** `dispatch` hands the action to
+  the relay and the channel echoes it back (`broadcast: { self: true }`), so
+  every device — the one that played included — applies from the same place in
+  the same order. With no relay installed, `dispatch` is the hot-seat path,
+  untouched. That seam is the whole integration: `applyLocally` is the old
+  body of `dispatch`.
+- `ackCard` goes over the wire too. A card blocks each client's animation
+  queue, so if only the drawer dismissed it, everyone else would sit at
+  `animating === true` for ever.
+- **`actorFor(state)` decides who may act** — not `game.current`, since an
+  auction belongs to the head of the bidding queue. The HUD reads it through
+  `useIsMyTurn` / `useMySeat` in `src/ui/useTurn.ts`; never paste
+  `=== localPlayerId` into a component.
+- **Seat = pawn.** One unique index keeps both unique, and turn order follows
+  the pawn table. `rooms.seat_order` freezes the mapping at kickoff, because
+  the engine numbers players by their position in the array given to
+  `createGame` — recomputing it later would renumber everyone the moment
+  somebody left.
+- **Identity is per tab** (`sessionStorage`), not per browser. Two tabs of one
+  browser sharing an id meant the second player silently took over the first
+  one's seat — and two tabs is how anyone tries this before a real game.
+- Anonymous sign-ins may be switched off on a Supabase project. When they are,
+  `ensureSession` generates the id locally and the `anon` policies apply: the
+  game still works, but seat ownership is a convention rather than a rule.
+  Trades are **disabled online** until they become propose-then-accept: the
+  engine still executes an offer on the spot, with no consent from the other
+  side.
 
 ### Dice
 

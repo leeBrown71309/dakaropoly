@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsOnline } from "../useTurn";
 import { BOARD } from "../../game/data/board";
 import { GROUP_COLORS } from "../../game/colors";
 import { ownedPositions } from "../../game/selectors";
@@ -105,6 +106,7 @@ export function TradeModal() {
   const toggleTrade = useGame((s) => s.toggleTrade);
   const dispatch = useGame((s) => s.dispatch);
   const compact = useCompact();
+  const online = useIsOnline();
 
   const [to, setTo] = useState<number | null>(null);
   const [giveMoney, setGiveMoney] = useState(0);
@@ -117,7 +119,8 @@ export function TradeModal() {
   const current = game.players[game.current];
   if (!current) return null;
 
-  const canTrade = game.phase === "post-roll" || game.phase === "turn-start";
+  const canTrade =
+    !online && (game.phase === "post-roll" || game.phase === "turn-start");
   const target = to !== null ? game.players[to] : null;
 
   const reset = () => {

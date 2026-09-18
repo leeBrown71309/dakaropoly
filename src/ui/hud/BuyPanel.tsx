@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn, useWaitingFor } from "../useTurn";
 import { BOARD } from "../../game/data/board";
 import type { TileDef } from "../../game/types";
 import { decisionAnchor } from "./anchor";
@@ -16,6 +17,8 @@ export function BuyPanel() {
   // the token it describes.
   const animating = useGame((s) => s.animating);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
+  const waitingForName = useWaitingFor();
   if (animating || !game || game.phase !== "buy-decision" || game.buyTile === null) return null;
 
   const pos = game.buyTile;
@@ -46,29 +49,35 @@ export function BuyPanel() {
         <Money amount={price} className={`font-bold text-ink-900 ${compact ? "text-[14px]" : "text-[17px]"}`} />
       </div>
 
-      <div className="mt-1.5 flex gap-1.5">
-        <Button
-          face="teal"
-          size={compact ? "sm" : "md"}
-          icon="coins"
-          block
-          disabled={!affordable}
-          onClick={() => dispatch({ t: "buy" })}
-        >
-          Acheter
-        </Button>
-        <Button
-          face="bone"
-          size={compact ? "sm" : "md"}
-          icon="gavel"
-          block
-          onClick={() => dispatch({ t: "decline" })}
-        >
-          Aux enchères
-        </Button>
-      </div>
+      {!myTurn ? (
+        <p className="mt-1.5 text-center text-[11.5px] font-semibold text-sand-200">
+          {waitingForName ? `${waitingForName} décide…` : "En attente…"}
+        </p>
+      ) : (
+        <div className="mt-1.5 flex gap-1.5">
+          <Button
+            face="teal"
+            size={compact ? "sm" : "md"}
+            icon="coins"
+            block
+            disabled={!affordable}
+            onClick={() => dispatch({ t: "buy" })}
+          >
+            Acheter
+          </Button>
+          <Button
+            face="bone"
+            size={compact ? "sm" : "md"}
+            icon="gavel"
+            block
+            onClick={() => dispatch({ t: "decline" })}
+          >
+            Aux enchères
+          </Button>
+        </div>
+      )}
 
-      {!affordable && (
+      {myTurn && !affordable && (
         <p className="mt-1.5 text-center text-[10.5px] font-semibold leading-snug text-sand-200">
           Fonds insuffisants — le bien part aux enchères.
         </p>

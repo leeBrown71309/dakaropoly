@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn, useWaitingFor } from "../useTurn";
 import { decisionAnchor } from "./anchor";
 import { netWorthOf } from "../../game/selectors";
 import { Card, Label, BrassRule } from "../kit/Surface";
@@ -17,6 +18,8 @@ export function DebtPanel() {
   const animating = useGame((s) => s.animating);
   const toggleManage = useGame((s) => s.toggleManage);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
+  const waitingForName = useWaitingFor();
   if (animating || !game || game.phase !== "debt" || !game.debt) return null;
 
   const debt = game.debt;
@@ -79,29 +82,35 @@ export function DebtPanel() {
         </div>
       </Card>
 
-      <div className="mt-1.5 flex gap-1.5">
-        <Button
-          face="teal"
-          size={compact ? "sm" : "md"}
-          icon="coins"
-          block
-          disabled={!canPay}
-          onClick={() => dispatch({ t: "pay-debt" })}
-        >
-          Régler
-        </Button>
-        <Button
-          face="clay"
-          size={compact ? "sm" : "md"}
-          icon="flag"
-          block
-          onClick={() => dispatch({ t: "declare-bankruptcy" })}
-        >
-          Faillite
-        </Button>
-      </div>
+      {!myTurn ? (
+        <p className="mt-1.5 text-center text-[11.5px] font-semibold text-sand-200">
+          {waitingForName ? `${waitingForName} doit régler…` : "En attente…"}
+        </p>
+      ) : (
+        <div className="mt-1.5 flex gap-1.5">
+          <Button
+            face="teal"
+            size={compact ? "sm" : "md"}
+            icon="coins"
+            block
+            disabled={!canPay}
+            onClick={() => dispatch({ t: "pay-debt" })}
+          >
+            Régler
+          </Button>
+          <Button
+            face="clay"
+            size={compact ? "sm" : "md"}
+            icon="flag"
+            block
+            onClick={() => dispatch({ t: "declare-bankruptcy" })}
+          >
+            Faillite
+          </Button>
+        </div>
+      )}
 
-      {!canPay && (
+      {myTurn && !canPay && (
         <button
           type="button"
           onClick={toggleManage}

@@ -12,7 +12,10 @@ export interface Toast {
   tone: "good" | "bad" | "info";
 }
 
-export type Screen = "home" | "setup" | "game" | "over";
+export type Screen = "home" | "setup" | "online" | "game" | "over";
+
+/** Whether the online screen opens on creating a room or joining one. */
+export type OnlineMode = "create" | "join";
 
 /** Pacing and audio the player can tune from the settings panel. */
 export interface Settings {
@@ -73,9 +76,21 @@ interface Store {
   tradeOpen: boolean;
   logOpen: boolean;
   openSetup: () => void;
+  onlineMode: OnlineMode;
+  /** `code` pre-fills the field when arriving from a shared link. */
+  openOnline: (mode: OnlineMode, code?: string) => void;
+  pendingCode: string;
   goHome: () => void;
   /** `seed` is supplied online so every client builds the same board. */
   startGame: (defs: { name: string; pawn: number }[], seed?: number) => void;
+  /**
+   * Takes on a game that was built elsewhere — the authoritative snapshot of
+   * an online room, either at kickoff or after a resync.
+   */
+  adoptGame: (game: GameState, localPlayerId: number | null) => void;
+  /** Plays an action here and now. Online this is driven by the wire. */
+  applyLocally: (action: Action) => void;
+  /** Plays an action, or sends it if this game is online. */
   dispatch: (action: Action) => void;
   ackCard: () => void;
   toggleSound: () => void;
@@ -97,6 +112,19 @@ const ANNOUNCE_SOUND: Record<AnnounceKind, SoundName> = {
 
 let queue: GameEvent[] = [];
 let pumping = false;
+
+/**
+ * Where actions go when the game is online. `null` in a hot-seat game, in
+ * which case `dispatch` applies them directly and nothing about the local
+ * game changes. The network layer installs itself here on joining a room and
+ * removes itself on leaving.
+ */
+type ActionRelay = (action: Action) => void;
+let relay: ActionRelay | null = null;
+
+export function setActionRelay(next: ActionRelay | null): void {
+  relay = next;
+}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -293,6 +321,10 @@ export const useGame = create<Store>()(
     tradeOpen: false,
     logOpen: false,
     openSetup: () => set({ screen: "setup" }),
+    onlineMode: "create",
+    pendingCode: "",
+    openOnline: (mode, code = "") =>
+      set({ screen: "online", onlineMode: mode, pendingCode: code }),
     goHome: () => {
       queue = [];
       // Leaving while a card is on the table would strand the pump on a
@@ -344,30 +376,68 @@ export const useGame = create<Store>()(
         rainKey: 0,
       });
     },
-    dispatch: (action) => {
+    adoptGame: (game, localPlayerId) => {
+      queue = [];
+      get().cardResolve?.();
+      const visPos: Record<number, number> = {};
+      for (const p of game.players) visPos[p.id] = p.position;
+      const pending = game.card;
+      const card = pending ? CARDS_BY_ID[pending.cardId] : undefined;
+      set({
+        screen: game.phase === "game-over" ? "over" : "game",
+        game,
+        localPlayerId,
+        visPos,
+        dice: null,
+        diceThrow: null,
+        // A card left on the table blocks every action until acknowledged, so
+        // a client arriving mid-draw has to see it too.
+        cardView: pending && card ? { deck: pending.deck, card } : null,
+        cardResolve: null,
+        announcement: null,
+        animating: false,
+        settingsOpen: false,
+        confirmQuitOpen: false,
+        manageOpen: false,
+        tradeOpen: false,
+        logOpen: false,
+        rainKey: 0,
+      });
+    },
+    applyLocally: (action) => {
       const game = get().game;
       if (!game) return;
       try {
         const res = applyAction(game, action);
         set({ game: res.state });
         enqueue(res.events);
+        if (action.t === "ack-card") {
+          // The queue is parked on this promise. Release it *after* the
+          // follow-up events are queued, so the pump runs straight on
+          // rather than draining, stopping, and starting again.
+          const resolve = get().cardResolve;
+          set({ cardResolve: null, cardView: null });
+          resolve?.();
+        }
       } catch (e) {
         pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
       }
     },
+    dispatch: (action) => {
+      // Online, an action is not applied where it is played: it goes out on
+      // the wire and every client — this one included — applies it when it
+      // comes back, so all devices replay the same sequence in the same
+      // order. With no relay installed this is the hot-seat path, unchanged.
+      if (relay) {
+        relay(action);
+        return;
+      }
+      get().applyLocally(action);
+    },
     ackCard: () => {
       const game = get().game;
       if (!game || game.phase !== "card") return;
-      const resolve = get().cardResolve;
-      set({ cardResolve: null, cardView: null });
-      try {
-        const res = applyAction(game, { t: "ack-card" });
-        set({ game: res.state });
-        enqueue(res.events);
-      } catch (e) {
-        pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
-      }
-      resolve?.();
+      get().dispatch({ t: "ack-card" });
     },
     toggleSound: () => {
       const next = !get().soundOn;

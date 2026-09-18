@@ -4,7 +4,7 @@
 
 ## 1. Vision
 
-Monopoly 3D complet, jouable dans le navigateur, pour soirées famille : **2–8 joueurs sur un seul écran** (hot-seat, chacun son tour). Plateau **Dakar** (rues/ports réels, du moins cher au plus cher), **règles officielles** strictes, **3D diorama légère** (~60 fps, zéro asset externe), UI française, touches fun (sons, animations, prix humoristiques en fin de partie). Usage personnel, pas commercial.
+Monopoly 3D complet, jouable dans le navigateur, pour soirées famille : **2–8 joueurs**, soit sur un seul écran (hot-seat), soit **en ligne avec un code de salon**, chacun sur son appareil. Plateau **Dakar** (rues/ports réels, du moins cher au plus cher), **règles officielles** strictes, **3D diorama légère** (~60 fps, zéro asset externe), UI française, touches fun (sons, animations, prix humoristiques en fin de partie). Usage personnel, pas commercial.
 
 ## 2. Stack
 
@@ -22,7 +22,8 @@ src/three/             Scene.tsx (canvas), BoardMesh.tsx (plateau/cases), PawnMe
                        geometry.ts (grille 13×13, ancres pions), textures.ts (labels canvas)
 src/ui/screens/        Home, Setup, GameScreen, GameOver
 src/ui/hud/            PlayersPanel, ActionBar, BuyPanel, AuctionPanel, DebtPanel, ManagePanel, TradeModal, CardModal, Toasts, TurnBanner
-tests/engine.test.ts   26 tests du moteur (26/26 ✅)
+src/net/               Mode en ligne : Supabase Realtime, salons, verrouillage des tours
+tests/                 47 tests (moteur, dés, événements, durcissement)
 ```
 
 Règle d'or : **la logique va dans le moteur** (pur, testable), la 3D et l'HUD ne font que consommer l'état + jouer les événements.
@@ -43,7 +44,7 @@ Règle d'or : **la logique va dans le moteur** (pur, testable), la 3D et l'HUD n
 3. **Edge cases UI** : dettes à plusieurs joueurs (carte « payez 50 F à chacun »), enchères avec 3+ enchérisseurs en rotation, timer d'enchère avec suspense (prévu, non fait).
 4. **Ambiance sonore** : boucle de fond légère + volume réglable.
 5. **Règles maison configurables** (écran d'options avant partie : pot au parking, double salaire Départ on/off…).
-6. **Plus tard** : mode en ligne (session partagée, chacun sur son appareil) — le moteur pur rend ça faisable.
+6. ~~Mode en ligne~~ **fait** (étapes 1–2) : salon, code, tours verrouillés. Restent les échanges à double consentement, le chat écrit, les avatars et les spectateurs — puis le vocal, mis en attente.
 
 ## 6. Pièges / notes techniques pour l'agent
 
@@ -53,6 +54,8 @@ Règle d'or : **la logique va dans le moteur** (pur, testable), la 3D et l'HUD n
 - Le store garde l'état entre HMR — faire un reload complet pour repartir de zéro.
 - Une partie en cours + modif du code = l'écran peut repasser au setup : comportement HMR, pas un bug.
 - Vérifs imposées après chaque changement : `bun x tsc -p tsconfig.json --noEmit`, `bun run test`, et `bun run build` avant livraison.
+- Mode en ligne : deux onglets du **même** navigateur sont deux joueurs distincts (l'identité est par onglet, pas par navigateur). Fermer l'onglet perd le siège — la reprise de siège reste à faire.
+- Les échanges sont désactivés en ligne tant qu'ils s'exécutent sans l'accord du destinataire.
 
 ## 7. Commandes
 
