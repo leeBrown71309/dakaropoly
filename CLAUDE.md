@@ -108,6 +108,19 @@ A phone held in landscape is the smallest board the game supports: roughly 740×
 - **Safe areas are handled once.** `GameScreen` mounts every edge-anchored control inside a `.p-safe` wrapper; absolutely positioned children resolve against its padding box, so they clear a notch without knowing it exists. That wrapper is `pointer-events-none`, so anything mounted in it that the player touches needs `pointer-events-auto`. Full-bleed overlays — the card, the announcement, the modals, the money rain — stay outside it and run to the glass.
 - Never put Tailwind padding utilities on a `.p-safe` element: utilities sit in a later cascade layer and would win.
 - Compact is not only smaller type. The camera pulls back (`COMPACT_VIEW`), the zoom buttons fold into the rail as a single recentre because pinching already zooms, the decision panels hang from the top and scroll instead of centring (`decisionAnchor`), the roster becomes two columns, and the renderer drops to a 1024 shadow map with no MSAA.
+- **`document.fullscreenElement` is not to be trusted on Android.** The
+  browser collapses fullscreen to show a permission prompt — asking for the
+  microphone does it every time — and does not reliably clear the flag or
+  fire `fullscreenchange`. `enterLandscape` therefore asks for fullscreen
+  unconditionally (re-asking while genuinely fullscreen is a no-op) and tries
+  the orientation lock whether or not the request succeeded. Reading the flag
+  to decide whether to ask is what left a phone in landscape with the browser
+  chrome back and no way to return; an early `return` on refusal is what made
+  the rotate gate's button do nothing at all.
+- **Fullscreen cannot be taken back by the code that lost it.** `getUserMedia`
+  resolves long after the tap that called it, so the gesture is spent and no
+  request will be granted. `keepingFullscreen` wraps the call and re-enters at
+  the player's *next* touch, which is a gesture the browser accepts.
 - `installAudioUnlock()` in `main.tsx` opens the audio context on the first gesture. Without it iOS plays the whole game in silence, because sounds are fired from the event queue long after the tap that caused them.
 
 ### Online play — `src/net/`

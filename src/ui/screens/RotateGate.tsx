@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { usePortraitBlocked } from "../useViewport";
-import { enterLandscape, fullscreenSupported } from "../fullscreen";
+import { enterLandscape, fullscreenSupported, type LandscapeResult } from "../fullscreen";
 import { Card, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { Icon } from "../icons/Icon";
@@ -14,6 +15,10 @@ import { Icon } from "../icons/Icon";
  */
 export function RotateGate() {
   const blocked = usePortraitBlocked();
+  // What the last attempt achieved. Reading it here at all means the gate is
+  // still up, so whatever happened was not enough — and saying nothing is
+  // how this ended up looking frozen.
+  const [tried, setTried] = useState<LandscapeResult | null>(null);
   if (!blocked) return null;
 
   return (
@@ -51,13 +56,21 @@ export function RotateGate() {
                     face="gold"
                     icon="expand"
                     className="mt-5"
-                    onClick={() => void enterLandscape()}
+                    onClick={() => void enterLandscape().then(setTried)}
                   >
                     Passer en plein écran
                   </Button>
-                  <p className="mt-2 text-[11px] leading-snug text-ink-500">
-                    Sur Android, le plein écran verrouille aussi l'orientation.
-                  </p>
+                  {tried ? (
+                    <p className="mt-2 text-[11.5px] leading-snug text-clay-700">
+                      {tried === "refused"
+                        ? "Le navigateur a refusé. Tournez l'appareil à la main."
+                        : "Toujours à l'endroit ? Vérifiez que la rotation automatique est activée sur le téléphone."}
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-[11px] leading-snug text-ink-500">
+                      Sur Android, le plein écran verrouille aussi l'orientation.
+                    </p>
+                  )}
                 </>
               )}
             </div>
