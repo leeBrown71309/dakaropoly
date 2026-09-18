@@ -154,6 +154,19 @@ matter live there, not in the client.
   the engine numbers players by their position in the array given to
   `createGame` — recomputing it later would renumber everyone the moment
   somebody left.
+- **A chair is a row, not a name in `seat_order`.** The order is the
+  *numbering*: it keeps naming whoever was given that engine player at
+  kickoff, which is exactly what lets them come back to the same chair.
+  Occupancy is a row in `room_players`. `seatOf` demands both agree, because
+  reading the order alone let a player leave, return through the spectator
+  door, and be sat straight back down — able to play, missing from their own
+  spectator list, and a player *and* a spectator at once to everyone else.
+  The same mistake in `syncWatchers` is what hid them from that list, and the
+  same one in `mayHear` would have let them talk through a muted spectator
+  switch.
+- **`watching` is remembered for the tab**, because `seat_order` still names
+  a spectator who used to play: without it, reloading would reclaim the chair
+  they deliberately got up from.
 - **Identity is per tab** (`sessionStorage`), not per browser. Two tabs of one
   browser sharing an id meant the second player silently took over the first
   one's seat — and two tabs is how anyone tries this before a real game.

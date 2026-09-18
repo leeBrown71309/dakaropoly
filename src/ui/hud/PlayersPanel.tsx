@@ -88,7 +88,10 @@ function VoiceMark({ clientId, compact }: { clientId: string | undefined; compac
 }
 
 function PlayerRow({ game, player: p, compact }: { game: GameState; player: Player; compact: boolean }) {
-  const clientId = useRoom((s) => s.seatOrder[p.id]);
+  // The device actually sitting in this chair, which is not necessarily the
+  // one `seat_order` still names: its occupant may have got up and come back
+  // to watch instead.
+  const clientId = useRoom((s) => s.seats.find((row) => row.seat === p.id)?.clientId);
   const active = game.current === p.id && game.phase !== "game-over";
   const holdings = holdingsOf(game, p);
   const count = ownedPositions(game, p.id).length;

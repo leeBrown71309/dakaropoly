@@ -26,6 +26,7 @@ import {
   setSpectatorVoice,
   resumeSeat,
   seatOffers,
+  seatOf,
   seatedInOrder,
   startRoom,
   touchSeat,
@@ -119,6 +120,13 @@ interface RoomState {
   reconnecting: boolean;
   /** Whether the host lets the people standing behind the table speak. */
   spectatorVoice: boolean;
+  /**
+   * This device came in through the spectator door and means to stay there.
+   *
+   * Kept because `seat_order` still names them: without it, reloading would
+   * reclaim the chair they deliberately gave up.
+   */
+  watching: boolean;
   /** What has been said in this room, oldest first. */
   messages: ChatMessage[];
   /** Messages that arrived while the chat was shut. */
@@ -183,6 +191,7 @@ export const useRoom = create<RoomState>()(
       pending: null,
       reconnecting: false,
       spectatorVoice: false,
+      watching: false,
       messages: [],
       unread: 0,
 
@@ -229,7 +238,7 @@ export const useRoom = create<RoomState>()(
         try {
           const clientId = await ensureSession();
           const code = await createRoom(clientId, name, pawn);
-          set({ code, clientId, hostId: clientId, status: "lobby", myName: name });
+          set({ code, clientId, hostId: clientId, status: "lobby", myName: name, watching: false });
           await connect(code, clientId, set, get);
           await refreshSeats(code, set);
         } catch (e) {
@@ -256,7 +265,13 @@ export const useRoom = create<RoomState>()(
           }
 
           await claimSeat(code, clientId, name, pawn);
-          set({ code, hostId: room.hostId, status: room.status, version: room.version });
+          set({
+            code,
+            hostId: room.hostId,
+            status: room.status,
+            version: room.version,
+            watching: pawn === null,
+          });
           await connect(code, clientId, set, get);
           await refreshSeats(code, set);
           channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
@@ -274,7 +289,7 @@ export const useRoom = create<RoomState>()(
         try {
           const clientId = await ensureSession();
           await resumeSeat(pending.code, seat);
-          set({ clientId, pending: null });
+          set({ clientId, pending: null, watching: false });
           await enterPlaying(pending.code, clientId, set, get);
         } catch (e) {
           // The offer was a snapshot of a moment; somebody may have taken the
@@ -300,7 +315,7 @@ export const useRoom = create<RoomState>()(
         set({ busy: true, error: null });
         try {
           const clientId = await ensureSession();
-          set({ clientId, myName: pending.name, pending: null });
+          set({ clientId, myName: pending.name, pending: null, watching: true });
           await enterPlaying(pending.code, clientId, set, get);
         } catch (e) {
           set({ error: message(e) });
@@ -347,7 +362,7 @@ export const useRoom = create<RoomState>()(
           // everybody left standing is a spectator.
           syncWatchers();
           channel?.send({ type: "broadcast", event: "room", payload: { k: "start" } satisfies Wire });
-          adopt(game, seatOrder, clientId);
+          adopt(game, seatOrder, seated, clientId);
         } catch (e) {
           set({ error: message(e) });
         } finally {
@@ -381,6 +396,7 @@ export const useRoom = create<RoomState>()(
           version: 0,
           pending: null,
           spectatorVoice: false,
+          watching: false,
           messages: [],
           unread: 0,
         });
@@ -432,8 +448,10 @@ export const useRoom = create<RoomState>()(
             return;
           }
 
-          // Your own chair is always yours, however long the tab was shut.
-          const seat = room.seatOrder.indexOf(clientId);
+          // Your own chair is always yours, however long the tab was shut —
+          // unless you got up from it on purpose, in which case walking back
+          // in must not sit you down again.
+          const seat = get().watching ? -1 : room.seatOrder.indexOf(clientId);
           if (seat >= 0) await resumeSeat(code, seat);
           await enterPlaying(code, clientId, set, get);
         } catch (e) {
@@ -468,6 +486,7 @@ export const useRoom = create<RoomState>()(
       partialize: (s) => ({
         code: s.code,
         myName: s.myName,
+        watching: s.watching,
         watchers: s.watchers,
         // The conversation comes back with the tab. Losing what was just said
         // to a refresh is the one thing a chat must not do.
@@ -514,8 +533,11 @@ async function refreshSeats(code: string, set: Setter): Promise<void> {
  */
 function syncWatchers(): void {
   const state = channel?.presenceState() ?? {};
-  const { seatOrder, seats } = useRoom.getState();
-  const seated = new Set<string>(seatOrder);
+  // Rows only. Adding `seat_order` here is what hid a returning spectator
+  // from their own list: the order still named them, so they counted as
+  // sitting down when they were plainly standing up.
+  const { seats } = useRoom.getState();
+  const seated = new Set<string>();
   for (const s of seats) if (s.seat !== null) seated.add(s.clientId);
 
   const watchers: Watcher[] = [];
@@ -559,10 +581,15 @@ async function refreshOffers(set: Setter, get: () => RoomState): Promise<void> {
   set({ pending: { ...pending, offers: seatOffers(found.room, found.seats, clientId) } });
 }
 
-/** Seats the local device and hands the board over to the game store. */
-function adopt(game: GameState, seatOrder: string[], clientId: string): void {
-  const seat = seatOrder.indexOf(clientId);
-  useGame.getState().adoptGame(game, seat === -1 ? null : seat);
+/**
+ * Seats the local device and hands the board over to the game store.
+ *
+ * The roster has the last word. `seat_order` still names a player who left,
+ * so taking it at face value sat a returning spectator straight back down at
+ * their old chair — see `seatOf`.
+ */
+function adopt(game: GameState, seatOrder: string[], seats: Seat[], clientId: string): void {
+  useGame.getState().adoptGame(game, seatOf(seatOrder, seats, clientId));
 }
 
 /** Subscribes, then takes up the board as the room currently holds it. */
@@ -580,8 +607,13 @@ async function enterPlaying(
   await refreshSeats(code, set);
   const found = await fetchRoomAndSeats(code);
   if (!found?.room.state) return;
-  set({ status: found.room.status, version: found.room.version, seatOrder: found.room.seatOrder });
-  adopt(found.room.state, found.room.seatOrder, clientId);
+  set({
+    status: found.room.status,
+    version: found.room.version,
+    seatOrder: found.room.seatOrder,
+    seats: found.seats,
+  });
+  adopt(found.room.state, found.room.seatOrder, found.seats, clientId);
   // The seating was read after the presence sync that carried this device in,
   // so the standing-and-sitting split is worked out once more here.
   syncWatchers();
@@ -596,8 +628,13 @@ async function enterPlaying(
 async function resync(code: string, clientId: string, set: Setter): Promise<void> {
   const found = await fetchRoomAndSeats(code);
   if (!found?.room.state) return;
-  set({ version: found.room.version, status: found.room.status, seatOrder: found.room.seatOrder });
-  adopt(found.room.state, found.room.seatOrder, clientId);
+  set({
+    version: found.room.version,
+    status: found.room.status,
+    seatOrder: found.room.seatOrder,
+    seats: found.seats,
+  });
+  adopt(found.room.state, found.room.seatOrder, found.seats, clientId);
   syncWatchers();
 }
 
@@ -707,9 +744,8 @@ async function connect(
         voice: voiceIsOn(),
       } satisfies WatchPresence),
     mayHear: (id) => {
-      const { seatOrder, seats, spectatorVoice } = get();
-      const seated =
-        seatOrder.includes(id) || seats.some((s) => s.clientId === id && s.seat !== null);
+      const { seats, spectatorVoice } = get();
+      const seated = seats.some((s) => s.clientId === id && s.seat !== null);
       return mayTalk(seated, spectatorVoice);
     },
   });
@@ -741,8 +777,13 @@ async function handle(
     case "start": {
       const found = await fetchRoomAndSeats(code);
       if (!found?.room.state) return;
-      set({ status: found.room.status, version: found.room.version, seatOrder: found.room.seatOrder });
-      adopt(found.room.state, found.room.seatOrder, clientId);
+      set({
+        status: found.room.status,
+        version: found.room.version,
+        seatOrder: found.room.seatOrder,
+        seats: found.seats,
+      });
+      adopt(found.room.state, found.room.seatOrder, found.seats, clientId);
       // Kickoff freezes the seating, and whoever was standing when it froze
       // is a spectator from here on.
       syncWatchers();
