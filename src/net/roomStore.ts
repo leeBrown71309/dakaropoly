@@ -10,7 +10,9 @@ import {
   attachVoice,
   detachVoice,
   handleVoiceWire,
+  mayTalk,
   syncVoicePeers,
+  useVoice,
   voiceIsOn,
   voicePeers,
   type VoiceWire,
@@ -19,9 +21,9 @@ import {
   claimSeat,
   createRoom,
   fetchRoomAndSeats,
-  fetchSeats,
   leaveRoom,
   pushSnapshot,
+  setSpectatorVoice,
   resumeSeat,
   seatOffers,
   seatedInOrder,
@@ -115,6 +117,8 @@ interface RoomState {
   pending: Pending | null;
   /** True from a page reload until the room has answered again. */
   reconnecting: boolean;
+  /** Whether the host lets the people standing behind the table speak. */
+  spectatorVoice: boolean;
   /** What has been said in this room, oldest first. */
   messages: ChatMessage[];
   /** Messages that arrived while the chat was shut. */
@@ -132,6 +136,8 @@ interface RoomState {
   leave: () => Promise<void>;
   /** Picks the room back up after a reload, or after a failed attempt. */
   restore: () => Promise<void>;
+  /** The host's switch for the spectators' microphones. */
+  allowSpectatorVoice: (allowed: boolean) => Promise<void>;
   /** Says something to the room. */
   say: (text: string) => void;
   markRead: () => void;
@@ -176,11 +182,27 @@ export const useRoom = create<RoomState>()(
       busy: false,
       pending: null,
       reconnecting: false,
+      spectatorVoice: false,
       messages: [],
       unread: 0,
 
       clearError: () => set({ error: null }),
       markRead: () => set({ unread: 0 }),
+
+      allowSpectatorVoice: async (allowed) => {
+        const code = get().code;
+        if (!code) return;
+        try {
+          await setSpectatorVoice(code, allowed);
+          set({ spectatorVoice: allowed });
+          // Everyone re-reads the room, which is where the switch lives, so a
+          // spectator who may no longer speak is dropped by every device.
+          channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
+          await refreshSeats(code, set);
+        } catch (e) {
+          set({ error: message(e) });
+        }
+      },
 
       /**
        * Sent rather than appended: it comes back through the channel like
@@ -358,6 +380,7 @@ export const useRoom = create<RoomState>()(
           watchers: [],
           version: 0,
           pending: null,
+          spectatorVoice: false,
           messages: [],
           unread: 0,
         });
@@ -472,7 +495,9 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
 type Setter = (partial: Partial<RoomState>) => void;
 
 async function refreshSeats(code: string, set: Setter): Promise<void> {
-  set({ seats: await fetchSeats(code) });
+  const found = await fetchRoomAndSeats(code);
+  if (!found) return;
+  set({ seats: found.seats, spectatorVoice: found.room.spectatorVoice });
   // Who is standing depends on who is sitting: a fresh roster can turn a
   // watcher into a player, or the other way round.
   syncWatchers();
@@ -506,13 +531,21 @@ function syncWatchers(): void {
 
   // Who has a microphone open falls out of the same pass: somebody joining
   // the call, leaving it, or closing their laptop all arrive here.
-  const selfId = useRoom.getState().clientId;
+  const { clientId: selfId, spectatorVoice } = useRoom.getState();
   if (selfId) {
     const heard = Object.entries(state).map(([clientId, metas]) => ({
       clientId,
       voice: (metas[0] as Partial<WatchPresence> | undefined)?.voice === true,
+      seated: seated.has(clientId),
     }));
-    syncVoicePeers(voicePeers(heard, selfId));
+    syncVoicePeers(voicePeers(heard, selfId, spectatorVoice));
+
+    // And this device hangs up on itself rather than waiting to be ignored:
+    // the host can withdraw the permission while somebody is mid-sentence.
+    if (!mayTalk(seated.has(selfId), spectatorVoice) && useVoice.getState().active) {
+      useVoice.getState().stop();
+      pushToast("L'hôte a réservé le micro aux joueurs", "info");
+    }
   }
 }
 
@@ -673,6 +706,12 @@ async function connect(
         name: get().myName,
         voice: voiceIsOn(),
       } satisfies WatchPresence),
+    mayHear: (id) => {
+      const { seatOrder, seats, spectatorVoice } = get();
+      const seated =
+        seatOrder.includes(id) || seats.some((s) => s.clientId === id && s.seat !== null);
+      return mayTalk(seated, spectatorVoice);
+    },
   });
 
   // Everything the player does is sent rather than played; it lands back

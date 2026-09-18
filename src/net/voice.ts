@@ -47,11 +47,21 @@ const METER_MS = 180;
 /** Longest we wait for candidates before sending the description anyway. */
 const GATHER_MS = 2500;
 
+/**
+ * How long a leg may sit `disconnected` before it is torn down and dialled
+ * again. WebRTC reports that state for an ordinary blip — a phone changing
+ * cell, a router breathing — and it usually recovers on its own, so pulling
+ * it down at once would cost more calls than it saved.
+ */
+const RECOVER_MS = 5000;
+
 interface Peer {
   pc: RTCPeerConnection;
   /** Remote audio has to be attached to an element to play at all. */
   el: HTMLAudioElement;
   analyser: AnalyserNode | null;
+  /** Running while the leg is down but might still come back. */
+  recovery: ReturnType<typeof setTimeout> | null;
 }
 
 interface VoiceState {
@@ -78,6 +88,16 @@ export interface VoiceLink {
   send: (wire: VoiceWire) => void;
   /** Re-publishes presence, so the others learn this device has a mic on. */
   announce: () => void;
+  /**
+   * Whether this device will answer that one at all.
+   *
+   * Asked on the way in rather than only when building the peer list: a
+   * spectator the host has not allowed could otherwise dial a player whose
+   * own device would politely answer, and be in the call by the back door.
+   * The room layer owns the rule because it is the one that knows who is
+   * sitting down.
+   */
+  mayHear: (clientId: string) => boolean;
 }
 
 let link: VoiceLink | null = null;
@@ -86,6 +106,14 @@ let localAnalyser: AnalyserNode | null = null;
 let audioCtx: AudioContext | null = null;
 let meter: ReturnType<typeof setInterval> | null = null;
 const peers = new Map<string, Peer>();
+/**
+ * Who this device should be connected to right now.
+ *
+ * Kept because a leg that dies has to be dialled again, and the presence
+ * sync that would otherwise say so only fires when presence itself changes
+ * — which it does not when a connection simply falls over.
+ */
+let wanted = new Set<string>();
 
 /* ------------------------------------------------------------------ */
 /* Pure bits, so the parts that decide anything can be tested.          */
@@ -101,12 +129,33 @@ export function shouldOffer(selfId: string, peerId: string): boolean {
   return selfId < peerId;
 }
 
-/** The other devices with a microphone open, from what presence reports. */
+/**
+ * Whether a device is allowed to be heard at all.
+ *
+ * A player always is. A spectator only when the host has said so: eight
+ * players is the most the mesh carries comfortably, and a room holds any
+ * number of people standing behind them — a dozen of them talking at once
+ * buries the game being played.
+ */
+export function mayTalk(seated: boolean, spectatorVoice: boolean): boolean {
+  return seated || spectatorVoice;
+}
+
+/**
+ * The other devices to dial, from what presence reports.
+ *
+ * The rule is applied here rather than only where the button is drawn, so a
+ * spectator who is not allowed to talk is not dialled by anybody — hiding
+ * their button would leave the enforcement to their own device.
+ */
 export function voicePeers(
-  entries: { clientId: string; voice: boolean }[],
+  entries: { clientId: string; voice: boolean; seated: boolean }[],
   selfId: string,
+  spectatorVoice: boolean,
 ): string[] {
-  return entries.filter((e) => e.voice && e.clientId !== selfId).map((e) => e.clientId);
+  return entries
+    .filter((e) => e.voice && e.clientId !== selfId && mayTalk(e.seated, spectatorVoice))
+    .map((e) => e.clientId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,11 +256,12 @@ export function voiceIsOn(): boolean {
 export function syncVoicePeers(ids: string[]): void {
   const selfId = link?.selfId;
   if (!selfId || !useVoice.getState().active) {
+    wanted = new Set();
     if (peers.size > 0) dropAll();
     return;
   }
 
-  const wanted = new Set(ids.filter((id) => id !== selfId));
+  wanted = new Set(ids.filter((id) => id !== selfId));
   for (const id of [...peers.keys()]) if (!wanted.has(id)) dropPeer(id);
   for (const id of wanted) {
     if (peers.has(id)) continue;
@@ -226,6 +276,7 @@ export async function handleVoiceWire(wire: VoiceWire): Promise<void> {
   // Everyone receives everything on this channel; this one is not ours.
   if (!selfId || wire.to !== selfId || wire.from === selfId) return;
   if (!useVoice.getState().active) return;
+  if (!link?.mayHear(wire.from)) return;
 
   const peer = ensurePeer(wire.from);
   const { pc } = peer;
@@ -269,7 +320,7 @@ function ensurePeer(id: string): Peer {
   const pc = new RTCPeerConnection(ICE);
   const el = new Audio();
   el.autoplay = true;
-  const peer: Peer = { pc, el, analyser: null };
+  const peer: Peer = { pc, el, analyser: null, recovery: null };
   peers.set(id, peer);
 
   if (localStream) for (const track of localStream.getTracks()) pc.addTrack(track, localStream);
@@ -286,7 +337,24 @@ function ensurePeer(id: string): Peer {
 
   pc.onconnectionstatechange = () => {
     useVoice.setState((s) => ({ peers: { ...s.peers, [id]: pc.connectionState } }));
-    if (pc.connectionState === "failed") dropPeer(id);
+    const state = pc.connectionState;
+
+    if (state === "connected") {
+      clearTimeout(peer.recovery ?? undefined);
+      peer.recovery = null;
+      return;
+    }
+    // Gone for good: the other device hung up, or the leg will not come back.
+    if (state === "failed" || state === "closed") {
+      redial(id);
+      return;
+    }
+    // Might still recover. Give it a moment before tearing it down — but do
+    // tear it down, or a peer who left and came back is never dialled again
+    // and both sides sit looking at a connection that is not there.
+    if (state === "disconnected" && peer.recovery === null) {
+      peer.recovery = setTimeout(() => redial(id), RECOVER_MS);
+    }
   };
 
   return peer;
@@ -318,9 +386,21 @@ async function gathered(pc: RTCPeerConnection): Promise<void> {
   });
 }
 
+/** Tears a dead leg down, and dials it again if it should still be up. */
+function redial(id: string): void {
+  const selfId = link?.selfId;
+  dropPeer(id);
+  if (!selfId || !useVoice.getState().active || !wanted.has(id)) return;
+  // Only the side that dials redials. The other one gets a fresh offer, or
+  // learns from the next presence sync that there is nobody to talk to.
+  if (shouldOffer(selfId, id)) void dial(id);
+}
+
 function dropPeer(id: string): void {
   const peer = peers.get(id);
   if (!peer) return;
+  clearTimeout(peer.recovery ?? undefined);
+  peer.recovery = null;
   peer.pc.onconnectionstatechange = null;
   peer.pc.ontrack = null;
   peer.pc.close();

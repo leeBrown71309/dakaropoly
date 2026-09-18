@@ -23,6 +23,10 @@ create table if not exists public.rooms (
   state      jsonb,                            -- GameState snapshot
   version    integer not null default 0,       -- compare-and-set counter
   seat_order jsonb not null default '[]',      -- client ids, frozen at kickoff
+  -- Whether the people standing behind the table may speak. Eight players is
+  -- the most the voice mesh carries comfortably and a room holds any number
+  -- of spectators on top; the host decides, and it is off until they say so.
+  spectator_voice boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -89,6 +93,7 @@ as $$
     'state', r.state,
     'version', r.version,
     'seat_order', r.seat_order,
+    'spectator_voice', r.spectator_voice,
     'seats', coalesce((
       select jsonb_agg(jsonb_build_object(
         'client_id', p.client_id, 'seat', p.seat, 'name', p.name,
@@ -223,6 +228,30 @@ begin
 end;
 $$;
 
+-- The host, and only the host, decides whether spectators get a microphone.
+create or replace function public.set_spectator_voice(p_code text, p_allowed boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Identité manquante' using errcode = '28000';
+  end if;
+
+  update public.rooms
+     set spectator_voice = p_allowed, updated_at = now()
+   where code = p_code and host_id = me;
+
+  if not found then
+    raise exception 'Seul l''hôte peut changer ce réglage' using errcode = '42501';
+  end if;
+end;
+$$;
+
 -- Still here. Called on a timer while a device is in a room.
 create or replace function public.touch_seat(p_code text)
 returns void
@@ -334,6 +363,7 @@ revoke execute on function public.create_room(text) from anon;
 revoke execute on function public.claim_seat(text, uuid, text, smallint) from anon;
 revoke execute on function public.resume_seat(text, smallint) from anon;
 revoke execute on function public.touch_seat(text) from anon;
+revoke execute on function public.set_spectator_voice(text, boolean) from anon;
 revoke execute on function public.leave_room(text) from anon;
 revoke execute on function public.open_room(text, bigint, jsonb, jsonb) from anon;
 revoke execute on function public.advance_room(text, jsonb, integer) from anon;

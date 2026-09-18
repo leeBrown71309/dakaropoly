@@ -29,12 +29,16 @@ export function RoomPanel() {
   const voiceActive = useVoice((s) => s.active);
   const voiceError = useVoice((s) => s.error);
   const stopVoice = useVoice((s) => s.stop);
+  const hostId = useRoom((s) => s.hostId);
+  const spectatorVoice = useRoom((s) => s.spectatorVoice);
+  const allowSpectatorVoice = useRoom((s) => s.allowSpectatorVoice);
   const compact = useCompact();
   const { copied, copy } = useCopy();
 
   if (!code) return null;
 
   const connected = clientId !== null && present.includes(clientId);
+  const isHost = clientId !== null && clientId === hostId;
   const players = seats.filter((s) => s.seat !== null).sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0));
 
   return (
@@ -99,6 +103,36 @@ export function RoomPanel() {
           ))}
         </div>
       )}
+
+      {/*
+        * The host's switch. Everyone sees where it stands — a spectator whose
+        * microphone is shut should be able to find out why without asking —
+        * but only the host can move it, here and in the database.
+        */}
+      <div className="mt-2 flex items-center gap-2">
+        <Icon name="eye" size={14} className="shrink-0 text-ink-300" />
+        <div className="min-w-0 flex-1">
+          <Label>Micro des spectateurs</Label>
+          <p className="mt-0.5 text-[11.5px] leading-snug text-ink-500">
+            {spectatorVoice
+              ? "Les spectateurs peuvent parler."
+              : "Le vocal est réservé aux joueurs assis."}
+          </p>
+        </div>
+        {isHost ? (
+          <Button
+            face={spectatorVoice ? "teal" : "slate"}
+            size="sm"
+            icon={spectatorVoice ? "mic" : "micOff"}
+            className="shrink-0"
+            onClick={() => void allowSpectatorVoice(!spectatorVoice)}
+          >
+            {spectatorVoice ? "Autorisé" : "Coupé"}
+          </Button>
+        ) : (
+          <span className="u-label shrink-0 text-ink-300">{spectatorVoice ? "autorisé" : "coupé"}</span>
+        )}
+      </div>
 
       {(voiceActive || voiceError) && (
         <div className="mt-2 flex items-center gap-2">

@@ -12,6 +12,8 @@ export interface RoomRow {
   version: number;
   /** Client ids in kickoff order; an index here is an engine player id. */
   seatOrder: string[];
+  /** Whether the host lets spectators use a microphone. */
+  spectatorVoice: boolean;
 }
 
 export interface Seat {
@@ -82,6 +84,7 @@ interface RawRoom {
   state: GameState | null;
   version: number;
   seat_order: string[] | null;
+  spectator_voice: boolean | null;
 }
 
 interface RawSeat {
@@ -101,6 +104,7 @@ const toRoom = (r: RawRoom): RoomRow => ({
   state: r.state,
   version: r.version,
   seatOrder: r.seat_order ?? [],
+  spectatorVoice: r.spectator_voice === true,
 });
 
 const toSeat = (r: RawSeat): Seat => ({
@@ -135,11 +139,6 @@ export async function fetchRoomAndSeats(
   const raw = await loadRoom(code);
   if (!raw) return null;
   return { room: toRoom(raw), seats: raw.seats?.map(toSeat) ?? [] };
-}
-
-export async function fetchSeats(code: string): Promise<Seat[]> {
-  const raw = await loadRoom(code);
-  return raw?.seats?.map(toSeat) ?? [];
 }
 
 /**
@@ -246,6 +245,21 @@ export function seatOffers(room: RoomRow, seats: Seat[], clientId: string): Seat
  * Like every other write here, it now goes through a function that takes the
  * identity from the session rather than from the request.
  */
+/**
+ * The host's switch for the spectators' microphones. Checked in the function
+ * rather than in the panel that draws it: the panel only knows what to show.
+ */
+export async function setSpectatorVoice(code: string, allowed: boolean): Promise<void> {
+  const { error } = await supabase().rpc("set_spectator_voice", {
+    p_code: code,
+    p_allowed: allowed,
+  });
+  if (error) {
+    if (error.code === "42501") throw new Error("Seul l'hôte peut changer ce réglage");
+    throw new Error(error.message);
+  }
+}
+
 export async function leaveRoom(code: string): Promise<void> {
   const { error } = await supabase().rpc("leave_room", { p_code: code });
   if (error) throw new Error(error.message);

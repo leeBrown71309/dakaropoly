@@ -201,6 +201,20 @@ reason it has this shape.
   leaving, muting a whole device or closing a laptop all arrive through the
   same `syncVoicePeers` path rather than three of them.
 - **Muting flips `track.enabled`**, it does not renegotiate.
+- **Spectators need the host's permission**, `rooms.spectator_voice`, off
+  until the host says otherwise. A table seats eight and a room holds any
+  number of people standing behind it; a dozen of them talking at once buries
+  the game. The rule is `mayTalk` and it is applied in three places, because
+  hiding one button is not a rule: the disallowed device hangs up on itself,
+  nobody puts it in their peer list, and `mayHear` refuses its signalling —
+  otherwise a spectator who forced their own microphone on would be politely
+  answered by every player.
+- **A leg that dies is dialled again.** WebRTC reports `disconnected` for an
+  ordinary blip and usually recovers, so that gets `RECOVER_MS` of grace;
+  `failed` and `closed` are torn down at once. Without this, a peer who left
+  the call and came straight back was never redialled — presence had not
+  changed by the time the second sync ran, so the stale connection looked
+  like a live one to everyone else.
 - **The microphone needs a secure context.** `localhost` and the deployed site
   qualify; `http://192.168.x.x` does not, so voice cannot be tested over the
   local Wi-Fi at all — only on the published site. The failure says so by name

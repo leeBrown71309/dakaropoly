@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldOffer, voicePeers } from "../src/net/voice";
+import { mayTalk, shouldOffer, voicePeers } from "../src/net/voice";
 
 /**
  * The two decisions a mesh makes before any audio flows: who dials whom, and
@@ -38,32 +38,68 @@ describe("who dials", () => {
 
 describe("who is in the call", () => {
   const room = [
-    { clientId: "me", voice: true },
-    { clientId: "talker", voice: true },
-    { clientId: "listener", voice: false },
-    { clientId: "watcher", voice: true },
+    { clientId: "me", voice: true, seated: true },
+    { clientId: "talker", voice: true, seated: true },
+    { clientId: "listener", voice: false, seated: true },
+    { clientId: "watcher", voice: true, seated: false },
   ];
 
-  it("keeps the others who have a microphone open", () => {
-    expect(voicePeers(room, "me")).toEqual(["talker", "watcher"]);
+  it("keeps the other players who have a microphone open", () => {
+    expect(voicePeers(room, "me", false)).toEqual(["talker"]);
   });
 
   it("leaves out this device, so nothing dials itself", () => {
-    expect(voicePeers(room, "me")).not.toContain("me");
+    expect(voicePeers(room, "me", true)).not.toContain("me");
   });
 
   it("leaves out everyone who has not joined the call", () => {
     // Being in the room is not being in the call: somebody who never opened
     // a microphone must not have one dialled at them.
-    expect(voicePeers(room, "me")).not.toContain("listener");
-  });
-
-  it("includes a spectator, who is in the room like anyone else", () => {
-    expect(voicePeers(room, "me")).toContain("watcher");
+    expect(voicePeers(room, "me", true)).not.toContain("listener");
   });
 
   it("is empty when nobody else is talking", () => {
-    expect(voicePeers([{ clientId: "me", voice: true }], "me")).toEqual([]);
-    expect(voicePeers([], "me")).toEqual([]);
+    expect(voicePeers([{ clientId: "me", voice: true, seated: true }], "me", true)).toEqual([]);
+    expect(voicePeers([], "me", true)).toEqual([]);
+  });
+});
+
+/**
+ * A room seats eight at most and can hold any number of people standing
+ * behind them. A dozen of those talking at once buries the game, so the host
+ * decides — and the rule is applied by every device, not just by the one
+ * whose button would be hidden.
+ */
+describe("the host's switch for spectators", () => {
+  const room = [
+    { clientId: "me", voice: true, seated: true },
+    { clientId: "player", voice: true, seated: true },
+    { clientId: "watcher", voice: true, seated: false },
+  ];
+
+  it("lets a player talk either way", () => {
+    expect(mayTalk(true, false)).toBe(true);
+    expect(mayTalk(true, true)).toBe(true);
+  });
+
+  it("keeps a spectator out until the host opens it", () => {
+    expect(mayTalk(false, false)).toBe(false);
+    expect(mayTalk(false, true)).toBe(true);
+  });
+
+  it("dials no spectator while the switch is off", () => {
+    // Not merely hidden on their screen: nobody calls them, so a spectator
+    // who forces their own microphone on is still heard by no one.
+    expect(voicePeers(room, "me", false)).toEqual(["player"]);
+  });
+
+  it("dials them once it is on", () => {
+    expect(voicePeers(room, "me", true)).toEqual(["player", "watcher"]);
+  });
+
+  it("still lets a spectator hear the players", () => {
+    // Shut out of talking is not shut out of listening: they came to follow
+    // the game, and the players are seated either way.
+    expect(voicePeers(room, "watcher", false)).toEqual(["me", "player"]);
   });
 });

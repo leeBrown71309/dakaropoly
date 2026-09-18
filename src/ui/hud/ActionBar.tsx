@@ -3,7 +3,7 @@ import { useGame } from "../../game/store";
 import { useRoom } from "../../net/roomStore";
 import { useVoice } from "../../net/voice";
 import { useCompact } from "../useViewport";
-import { useIsMyTurn, useIsOnline, useWaitingFor } from "../useTurn";
+import { useIsMyTurn, useIsOnline, useIsSpectator, useWaitingFor } from "../useTurn";
 import { cameraRig } from "../../three/cameraRig";
 import { Rail, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
@@ -56,6 +56,8 @@ export function ActionBar() {
   const voiceBusy = useVoice((s) => s.busy);
   const startVoice = useVoice((s) => s.start);
   const toggleMute = useVoice((s) => s.toggleMute);
+  const spectatorVoice = useRoom((s) => s.spectatorVoice);
+  const spectating = useIsSpectator();
   const toggleManage = useGame((s) => s.toggleManage);
   const toggleTrade = useGame((s) => s.toggleTrade);
   const toggleSettings = useGame((s) => s.toggleSettings);
@@ -94,6 +96,10 @@ export function ActionBar() {
               ? "Dette"
               : "Dette à régler"
             : "Résolution";
+
+  // A spectator only gets a microphone if the host has opened it: a room
+  // holds any number of them, and a dozen talking at once buries the game.
+  const micAllowed = !spectating || spectatorVoice;
 
   const primarySize = compact ? "md" : "lg";
   const secondarySize = compact ? "sm" : "md";
@@ -226,16 +232,18 @@ export function ActionBar() {
           <Fitting icon="receipt" label="Journal" active={logOpen} onClick={toggleLog} />
           {online && (
             <Fitting
-              icon={voiceActive && voiceMuted ? "micOff" : "mic"}
+              icon={(voiceActive && voiceMuted) || !micAllowed ? "micOff" : "mic"}
               label={
-                !voiceActive
-                  ? "Activer le micro"
-                  : voiceMuted
-                    ? "Reprendre le micro"
-                    : "Couper le micro"
+                !micAllowed
+                  ? "Micro réservé aux joueurs"
+                  : !voiceActive
+                    ? "Activer le micro"
+                    : voiceMuted
+                      ? "Reprendre le micro"
+                      : "Couper le micro"
               }
               active={voiceActive && !voiceMuted}
-              disabled={voiceBusy}
+              disabled={voiceBusy || !micAllowed}
               onClick={() => (voiceActive ? toggleMute() : void startVoice())}
             />
           )}
