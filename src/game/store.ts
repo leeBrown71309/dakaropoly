@@ -1,8 +1,10 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { applyAction, createGame } from "./engine";
 import { CARDS_BY_ID } from "./data/cards";
 import { sfx } from "../audio/sounds";
-import type { Action, CardDef, GameEvent, GameState } from "./types";
+import { simulateThrow, type DiceThrow } from "../animation/diceRoll";
+import type { Action, AnnounceKind, CardDef, GameEvent, GameState, SoundName } from "./types";
 
 export interface Toast {
   id: number;
@@ -12,13 +14,52 @@ export interface Toast {
 
 export type Screen = "home" | "setup" | "game" | "over";
 
+/** Pacing and audio the player can tune from the settings panel. */
+export interface Settings {
+  /** How long a paper slip stays pinned, in milliseconds. */
+  toastDuration: number;
+  /** How long an announcement card holds the queue, in milliseconds. */
+  announceDuration: number;
+  /** Time a token takes to hop one tile, in milliseconds. */
+  stepDuration: number;
+  /** Master volume, 0 to 1. */
+  volume: number;
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  toastDuration: 4500,
+  announceDuration: 3000,
+  stepDuration: 195,
+  volume: 0.8,
+};
+
+export interface Announcement {
+  kind: AnnounceKind;
+  title: string;
+  detail: string;
+  amount?: number;
+}
+
 interface Store {
   screen: Screen;
   game: GameState | null;
   visPos: Record<number, number>;
   dice: { a: number; b: number; rolling: boolean } | null;
+  /** Recorded physics for the throw in flight, replayed by the 3D dice. */
+  diceThrow: { recording: DiceThrow; startedAt: number } | null;
   cardView: { deck: "chance" | "chest"; card: CardDef } | null;
   cardResolve: (() => void) | null;
+  /** Card shown for a thing that happened *to* the player; auto-dismisses. */
+  announcement: Announcement | null;
+  /**
+   * True while the event queue is playing. Contextual panels wait for it,
+   * so a property card never appears before its token has arrived.
+   */
+  animating: boolean;
+  settings: Settings;
+  settingsOpen: boolean;
+  /** Leaving a game in progress throws it away, so it is confirmed first. */
+  confirmQuitOpen: boolean;
   toasts: Toast[];
   rainKey: number;
   soundOn: boolean;
@@ -34,7 +75,18 @@ interface Store {
   toggleManage: () => void;
   toggleTrade: () => void;
   toggleLog: () => void;
+  toggleSettings: () => void;
+  updateSettings: (patch: Partial<Settings>) => void;
+  askQuit: () => void;
+  cancelQuit: () => void;
 }
+
+const ANNOUNCE_SOUND: Record<AnnounceKind, SoundName> = {
+  tax: "pay",
+  rent: "pay",
+  jail: "jail",
+  bankruptcy: "bankrupt",
+};
 
 let queue: GameEvent[] = [];
 let pumping = false;
@@ -46,7 +98,7 @@ function pushToast(text: string, tone: Toast["tone"]): void {
   useGame.setState((s) => ({ toasts: [...s.toasts, t] }));
   setTimeout(() => {
     useGame.setState((s) => ({ toasts: s.toasts.filter((x) => x.id !== t.id) }));
-  }, 2800);
+  }, useGame.getState().settings.toastDuration);
 }
 
 function enqueue(events: GameEvent[]): void {
@@ -57,6 +109,7 @@ function enqueue(events: GameEvent[]): void {
 async function pump(): Promise<void> {
   if (pumping) return;
   pumping = true;
+  useGame.setState({ animating: true });
   try {
     while (queue.length > 0) {
       const ev = queue.shift() as GameEvent;
@@ -64,6 +117,7 @@ async function pump(): Promise<void> {
     }
   } finally {
     pumping = false;
+    useGame.setState({ animating: false });
   }
 }
 
@@ -71,10 +125,17 @@ async function handleEvent(ev: GameEvent): Promise<void> {
   switch (ev.t) {
     case "roll-dice": {
       sfx.play("dice");
-      useGame.setState({ dice: { a: ev.a, b: ev.b, rolling: true } });
-      await sleep(1050);
+      // The engine already drew the result; the throw is simulated for real
+      // and the pips are painted on afterwards, so the physics stays honest.
+      const turn = useGame.getState().game?.turnCount ?? 0;
+      const recording = simulateThrow(ev.a, ev.b, (ev.a * 31 + ev.b) * 7919 + turn);
+      useGame.setState({
+        dice: { a: ev.a, b: ev.b, rolling: true },
+        diceThrow: { recording, startedAt: performance.now() },
+      });
+      await sleep(recording.duration * 1000);
       useGame.setState((s) => ({ dice: s.dice ? { ...s.dice, rolling: false } : null }));
-      await sleep(420);
+      await sleep(430);
       return;
     }
     case "move-steps": {
@@ -84,7 +145,7 @@ async function handleEvent(ev: GameEvent): Promise<void> {
         const cur = st.visPos[ev.player] ?? 0;
         useGame.setState({ visPos: { ...st.visPos, [ev.player]: (cur + sign + 40) % 40 } });
         sfx.play("step");
-        await sleep(195);
+        await sleep(useGame.getState().settings.stepDuration);
       }
       return;
     }
@@ -96,7 +157,7 @@ async function handleEvent(ev: GameEvent): Promise<void> {
     }
     case "money": {
       if (ev.amount >= 0) {
-        sfx.play("cash");
+        sfx.play("register");
         if (ev.amount >= 300) useGame.setState({ rainKey: Date.now() });
       } else {
         sfx.play("pay");
@@ -131,107 +192,224 @@ async function handleEvent(ev: GameEvent): Promise<void> {
       await sleep(300);
       return;
     case "mortgage":
-    case "unmortgage":
-      sfx.play("buzzer");
+      sfx.play("mortgage");
       await sleep(280);
+      return;
+    case "unmortgage":
+      sfx.play("unmortgage");
+      await sleep(280);
+      return;
+    case "auction-start":
+      sfx.play("gavel");
+      await sleep(420);
+      return;
+    case "auction-end":
+      sfx.play("gavel");
+      await sleep(320);
       return;
     case "transfer":
       sfx.play("coin");
       await sleep(300);
       return;
     case "turn":
-      useGame.setState({ dice: null, cardView: null, manageOpen: false, tradeOpen: false });
+      useGame.setState({ dice: null, diceThrow: null, cardView: null, manageOpen: false, tradeOpen: false });
       return;
     case "winner":
-      await sleep(1000);
+      sfx.play("win");
+      await sleep(1400);
       useGame.setState({ screen: "over" });
       return;
+    case "announce": {
+      sfx.play(ANNOUNCE_SOUND[ev.kind]);
+      useGame.setState({ announcement: ev });
+      await sleep(useGame.getState().settings.announceDuration);
+      useGame.setState({ announcement: null });
+      await sleep(180);
+      return;
+    }
     case "toast":
+      pushToast(ev.text, ev.tone);
+      return;
     case "sound":
+      sfx.play(ev.name);
       return;
     default:
       return;
   }
 }
 
-export const useGame = create<Store>((set, get) => ({
-  screen: "home",
-  game: null,
-  visPos: {},
-  dice: null,
-  cardView: null,
-  cardResolve: null,
-  toasts: [],
-  rainKey: 0,
-  soundOn: true,
-  manageOpen: false,
-  tradeOpen: false,
-  logOpen: false,
-  openSetup: () => set({ screen: "setup" }),
-  goHome: () => {
-    queue = [];
-    set({
-      screen: "home",
-      game: null,
-      visPos: {},
-      dice: null,
-      cardView: null,
-      cardResolve: null,
-      manageOpen: false,
-      tradeOpen: false,
-      logOpen: false,
-      rainKey: 0,
-    });
+/** What survives a page reload. Everything else is rebuilt on rehydrate. */
+interface PersistedState {
+  screen: Screen;
+  game: GameState | null;
+  soundOn: boolean;
+  settings: Settings;
+}
+
+/**
+ * A saved game is only worth restoring if it still looks like one. A partial
+ * write, or a save from an older shape of `GameState`, is discarded rather
+ * than dropping the player into a broken board.
+ */
+function isRestorable(game: GameState | null): game is GameState {
+  return (
+    !!game &&
+    Array.isArray(game.players) &&
+    game.players.length >= 2 &&
+    Array.isArray(game.tiles) &&
+    game.tiles.length === 40 &&
+    typeof game.current === "number" &&
+    !!game.players[game.current]
+  );
+}
+
+export const useGame = create<Store>()(
+  persist(
+    (set, get) => ({
+    screen: "home",
+    game: null,
+    visPos: {},
+    dice: null,
+    diceThrow: null,
+    cardView: null,
+    cardResolve: null,
+    announcement: null,
+    animating: false,
+    settings: DEFAULT_SETTINGS,
+    settingsOpen: false,
+    confirmQuitOpen: false,
+    toasts: [],
+    rainKey: 0,
+    soundOn: true,
+    manageOpen: false,
+    tradeOpen: false,
+    logOpen: false,
+    openSetup: () => set({ screen: "setup" }),
+    goHome: () => {
+      queue = [];
+      set({
+        screen: "home",
+        game: null,
+        visPos: {},
+        dice: null,
+        diceThrow: null,
+        cardView: null,
+        cardResolve: null,
+        announcement: null,
+        animating: false,
+        settingsOpen: false,
+        confirmQuitOpen: false,
+        manageOpen: false,
+        tradeOpen: false,
+        logOpen: false,
+        rainKey: 0,
+      });
+    },
+    startGame: (defs) => {
+      queue = [];
+      const game = createGame(defs);
+      const visPos: Record<number, number> = {};
+      for (const p of game.players) visPos[p.id] = 0;
+      set({
+        screen: "game",
+        game,
+        visPos,
+        dice: null,
+        diceThrow: null,
+        cardView: null,
+        cardResolve: null,
+        announcement: null,
+        animating: false,
+        settingsOpen: false,
+        confirmQuitOpen: false,
+        manageOpen: false,
+        tradeOpen: false,
+        logOpen: false,
+        rainKey: 0,
+      });
+    },
+    dispatch: (action) => {
+      const game = get().game;
+      if (!game) return;
+      try {
+        const res = applyAction(game, action);
+        set({ game: res.state });
+        enqueue(res.events);
+      } catch (e) {
+        pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
+      }
+    },
+    ackCard: () => {
+      const game = get().game;
+      if (!game || game.phase !== "card") return;
+      const resolve = get().cardResolve;
+      set({ cardResolve: null, cardView: null });
+      try {
+        const res = applyAction(game, { t: "ack-card" });
+        set({ game: res.state });
+        enqueue(res.events);
+      } catch (e) {
+        pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
+      }
+      resolve?.();
+    },
+    toggleSound: () => {
+      const next = !get().soundOn;
+      sfx.enabled = next;
+      set({ soundOn: next });
+    },
+    toggleManage: () => set((s) => ({ manageOpen: !s.manageOpen })),
+    toggleTrade: () => set((s) => ({ tradeOpen: !s.tradeOpen })),
+    toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
+  toggleSettings: () => set((s) => ({ settingsOpen: !s.settingsOpen })),
+  askQuit: () => set({ confirmQuitOpen: true }),
+  cancelQuit: () => set({ confirmQuitOpen: false }),
+  updateSettings: (patch) => {
+    const settings = { ...get().settings, ...patch };
+    sfx.volume = settings.volume;
+    set({ settings });
   },
-  startGame: (defs) => {
-    queue = [];
-    const game = createGame(defs);
-    const visPos: Record<number, number> = {};
-    for (const p of game.players) visPos[p.id] = 0;
-    set({
-      screen: "game",
-      game,
-      visPos,
-      dice: null,
-      cardView: null,
-      cardResolve: null,
-      manageOpen: false,
-      tradeOpen: false,
-      logOpen: false,
-      rainKey: 0,
-    });
-  },
-  dispatch: (action) => {
-    const game = get().game;
-    if (!game) return;
-    try {
-      const res = applyAction(game, action);
-      set({ game: res.state });
-      enqueue(res.events);
-    } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
-    }
-  },
-  ackCard: () => {
-    const game = get().game;
-    if (!game || game.phase !== "card") return;
-    const resolve = get().cardResolve;
-    set({ cardResolve: null, cardView: null });
-    try {
-      const res = applyAction(game, { t: "ack-card" });
-      set({ game: res.state });
-      enqueue(res.events);
-    } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
-    }
-    resolve?.();
-  },
-  toggleSound: () => {
-    const next = !get().soundOn;
-    sfx.enabled = next;
-    set({ soundOn: next });
-  },
-  toggleManage: () => set((s) => ({ manageOpen: !s.manageOpen })),
-  toggleTrade: () => set((s) => ({ tradeOpen: !s.tradeOpen })),
-  toggleLog: () => set((s) => ({ logOpen: !s.logOpen })),
-}));
+    }),
+    {
+      name: "dakaropoly/save",
+      version: 1,
+      // A Monopoly evening is long: only the board state is worth keeping.
+      // Anything mid-animation is transient and is rebuilt on rehydrate.
+      partialize: (s): PersistedState => ({
+        screen: s.screen,
+        game: s.game,
+        soundOn: s.soundOn,
+        settings: s.settings,
+      }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        // A save written before a setting existed must not leave it undefined.
+        state.settings = { ...DEFAULT_SETTINGS, ...state.settings };
+        sfx.enabled = state.soundOn;
+        sfx.volume = state.settings.volume;
+
+        if (state.screen !== "game" && state.screen !== "over") return;
+
+        if (!isRestorable(state.game)) {
+          state.screen = "home";
+          state.game = null;
+          return;
+        }
+
+        // The animation queue did not survive the reload, so snap every token
+        // to where the rules say it is rather than where it was mid-hop.
+        const visPos: Record<number, number> = {};
+        for (const player of state.game.players) visPos[player.id] = player.position;
+        state.visPos = visPos;
+
+        // A card left waiting to be acknowledged would otherwise be
+        // unreachable: its phase blocks every action until it is dismissed.
+        const pending = state.game.card;
+        if (state.game.phase === "card" && pending) {
+          const card = CARDS_BY_ID[pending.cardId];
+          if (card) state.cardView = { deck: pending.deck, card };
+        }
+      },
+    },
+  ),
+);

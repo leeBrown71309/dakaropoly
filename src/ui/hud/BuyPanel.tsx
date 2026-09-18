@@ -1,48 +1,78 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
+import { useCompact } from "../useViewport";
 import { BOARD } from "../../game/data/board";
-import { formatMoney, type TileDef } from "../../game/types";
+import type { TileDef } from "../../game/types";
+import { decisionAnchor } from "./anchor";
+import { TitleDeed } from "../kit/TitleDeed";
+import { Button } from "../kit/Button";
+import { Money } from "../kit/Money";
+import { Label } from "../kit/Surface";
 
 export function BuyPanel() {
   const game = useGame((s) => s.game);
   const dispatch = useGame((s) => s.dispatch);
-  if (!game || game.phase !== "buy-decision" || game.buyTile === null) return null;
-  const tile = BOARD[game.buyTile] as TileDef | undefined;
+  // Wait for the event queue to drain, so the card never arrives before
+  // the token it describes.
+  const animating = useGame((s) => s.animating);
+  const compact = useCompact();
+  if (animating || !game || game.phase !== "buy-decision" || game.buyTile === null) return null;
+
+  const pos = game.buyTile;
+  const tile = BOARD[pos] as TileDef | undefined;
   const price = tile?.price ?? 0;
   const player = game.players[game.current];
-  const preview =
-    tile?.kind === "station"
-      ? "25 F (1 gare)"
-      : tile?.kind === "utility"
-        ? "4 × dés"
-        : `${tile?.rents?.[0] ?? 0} F`;
+  const affordable = (player?.money ?? 0) >= price;
 
   return (
     <motion.div
-      initial={{ y: 40, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      className="absolute bottom-28 left-1/2 z-30 w-[340px] -translate-x-1/2 rounded-2xl border border-white/10 bg-[#101a2b]/92 p-4 backdrop-blur-md"
+      initial={{ x: 60, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 320, damping: 30 }}
+      className={decisionAnchor(compact)}
     >
-      <div className="mb-1 flex items-center justify-between">
-        <h3 className="text-lg font-bold text-slate-100">{tile?.name}</h3>
-        <span className="text-sm font-bold text-amber-300">{formatMoney(price)}</span>
+      <TitleDeed pos={pos} activeRow={0} dense={compact} />
+
+      <div
+        className={`mt-1.5 flex items-center justify-between rounded-[3px] ${
+          compact ? "px-2.5 py-1.5" : "px-3 py-2"
+        }`}
+        style={{
+          background: "linear-gradient(180deg,#f7f0e1,#e6d9bf)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,.8), 0 8px 18px -8px rgba(52,33,12,.5)",
+        }}
+      >
+        <Label>Prix d'achat</Label>
+        <Money amount={price} className={`font-bold text-ink-900 ${compact ? "text-[14px]" : "text-[17px]"}`} />
       </div>
-      <p className="mb-3 text-sm text-slate-400">Loyer de base : {preview}</p>
-      <div className="flex gap-2">
-        <button
-          disabled={(player?.money ?? 0) < price}
+
+      <div className="mt-1.5 flex gap-1.5">
+        <Button
+          face="teal"
+          size={compact ? "sm" : "md"}
+          icon="coins"
+          block
+          disabled={!affordable}
           onClick={() => dispatch({ t: "buy" })}
-          className="flex-1 rounded-xl bg-emerald-500 px-4 py-3 font-bold text-emerald-950 transition hover:bg-emerald-400 disabled:opacity-40"
         >
           Acheter
-        </button>
-        <button
+        </Button>
+        <Button
+          face="bone"
+          size={compact ? "sm" : "md"}
+          icon="gavel"
+          block
           onClick={() => dispatch({ t: "decline" })}
-          className="flex-1 rounded-xl bg-white/10 px-4 py-3 font-semibold text-slate-200 transition hover:bg-white/20"
         >
-          Refuser (enchères)
-        </button>
+          Aux enchères
+        </Button>
       </div>
+
+      {!affordable && (
+        <p className="mt-1.5 text-center text-[10.5px] font-semibold leading-snug text-sand-200">
+          Fonds insuffisants — le bien part aux enchères.
+        </p>
+      )}
     </motion.div>
   );
 }

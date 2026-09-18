@@ -1,3 +1,4 @@
+import { motion } from "framer-motion";
 import { Scene } from "../../three/Scene";
 import { useGame } from "../../game/store";
 import { PlayersPanel } from "../hud/PlayersPanel";
@@ -8,44 +9,56 @@ import { DebtPanel } from "../hud/DebtPanel";
 import { ManagePanel } from "../hud/ManagePanel";
 import { TradeModal } from "../hud/TradeModal";
 import { CardModal } from "../hud/CardModal";
+import { Announcement } from "../hud/Announcement";
+import { SettingsModal } from "../hud/SettingsModal";
+import { ConfirmQuit } from "../hud/ConfirmQuit";
 import { Toasts } from "../hud/Toasts";
+import { ViewControls } from "../hud/ViewControls";
 import { TurnBanner, MoneyRain } from "../hud/TurnBanner";
 
+/**
+ * The board fills the frame; every control lives on the rail at the foot of
+ * the screen or on a panel anchored to an edge.
+ *
+ * Those edge-anchored controls are mounted inside a safe-area frame, so a
+ * notch or a rounded corner never clips them — they position themselves
+ * against its padding box without knowing the insets exist. The 3D scene and
+ * the full-bleed overlays stay outside it and run to the glass.
+ */
 export function GameScreen() {
   const game = useGame((s) => s.game);
-  const toggleSound = useGame((s) => s.toggleSound);
-  const soundOn = useGame((s) => s.soundOn);
-  const goHome = useGame((s) => s.goHome);
   if (!game) return null;
 
   return (
-    <div className="relative h-full overflow-hidden bg-[radial-gradient(120%_90%_at_50%_15%,#16324f_0%,#0e1420_55%,#090d14_100%)]">
+    <div className="relative h-full overflow-hidden bg-[#0d2a2f]">
       <Scene />
-      <PlayersPanel />
-      <TurnBanner />
-      <div className="absolute right-3 top-3 z-30 flex gap-2">
-        <button
-          onClick={toggleSound}
-          className="rounded-xl border border-white/10 bg-[#101a2b]/80 px-3 py-2 text-sm text-slate-200 backdrop-blur-md hover:bg-white/10"
-        >
-          {soundOn ? "🔊" : "🔇"}
-        </button>
-        <button
-          onClick={goHome}
-          className="rounded-xl border border-white/10 bg-[#101a2b]/80 px-3 py-2 text-sm text-slate-200 backdrop-blur-md hover:bg-white/10"
-        >
-          🚪
-        </button>
+
+      <div className="p-safe pointer-events-none absolute inset-0">
+        <PlayersPanel />
+        <TurnBanner />
+        <ViewControls />
+        <ManagePanel />
+        <ActionBar />
+        <BuyPanel />
+        <AuctionPanel />
+        <DebtPanel />
+        <Toasts />
       </div>
-      <ManagePanel />
+
       <TradeModal />
-      <ActionBar />
-      <BuyPanel />
-      <AuctionPanel />
-      <DebtPanel />
       <CardModal />
-      <Toasts />
+      <Announcement />
+      <SettingsModal />
+      <ConfirmQuit />
       <MoneyRain />
+
+      {/* Curtain covering the first painted frame, lifted as the camera settles */}
+      <motion.div
+        className="pointer-events-none absolute inset-0 z-50 bg-[#0d2a2f]"
+        initial={{ opacity: 1 }}
+        animate={{ opacity: 0 }}
+        transition={{ duration: 0.85, ease: "easeOut" }}
+      />
     </div>
   );
 }
