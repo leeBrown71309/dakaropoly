@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useRoom } from "../../net/roomStore";
+import { useVoice } from "../../net/voice";
 import { useCompact } from "../useViewport";
 import { GROUP_MEMBERS, GROUP_ORDER } from "../../game/data/board";
 import { GROUP_COLORS } from "../../game/colors";
@@ -60,7 +61,34 @@ function Tab({ label, icon, count, active, compact, onSelect }: TabProps) {
   );
 }
 
+/**
+ * Whether this device can hear that one, and whether they are talking.
+ *
+ * Nothing at all until somebody opens a microphone: a row of grey mics on a
+ * table where nobody is talking says less than empty space does.
+ */
+function VoiceMark({ clientId, compact }: { clientId: string | undefined; compact: boolean }) {
+  const active = useVoice((s) => s.active);
+  const state = useVoice((s) => (clientId ? s.peers[clientId] : undefined));
+  const talking = useVoice((s) => (clientId ? s.talking[clientId] === true : false));
+  const self = useRoom((s) => s.clientId);
+
+  if (!active || !clientId) return null;
+  const up = clientId === self || state === "connected";
+  if (!up) return null;
+
+  return (
+    <Icon
+      name="mic"
+      size={compact ? 10 : 12}
+      className={`shrink-0 transition-colors ${talking ? "text-teal-500" : "text-ink-300"}`}
+      style={talking ? { filter: "drop-shadow(0 0 3px rgba(62,156,148,.8))" } : undefined}
+    />
+  );
+}
+
 function PlayerRow({ game, player: p, compact }: { game: GameState; player: Player; compact: boolean }) {
+  const clientId = useRoom((s) => s.seatOrder[p.id]);
   const active = game.current === p.id && game.phase !== "game-over";
   const holdings = holdingsOf(game, p);
   const count = ownedPositions(game, p.id).length;
@@ -98,6 +126,7 @@ function PlayerRow({ game, player: p, compact }: { game: GameState; player: Play
           >
             {p.name}
           </span>
+          <VoiceMark clientId={clientId} compact={compact} />
           {p.inJail && <Icon name="jail" size={compact ? 10 : 12} className="shrink-0 text-clay-700" />}
           {p.getOutCards > 0 && (
             <Icon name="key" size={compact ? 10 : 12} className="shrink-0 text-gold-700" />
@@ -147,11 +176,13 @@ function PlayerRow({ game, player: p, compact }: { game: GameState; player: Play
 }
 
 function SpectatorRow({
+  clientId,
   name,
   here,
   mine,
   compact,
 }: {
+  clientId: string;
   name: string;
   here: boolean;
   mine: boolean;
@@ -182,6 +213,7 @@ function SpectatorRow({
         >
           {name}
         </span>
+        <VoiceMark clientId={clientId} compact={compact} />
         {mine && <span className="u-label shrink-0 text-gold-700">vous</span>}
       </div>
 
@@ -278,6 +310,7 @@ export function PlayersPanel() {
                     {spectators.map((s) => (
                       <SpectatorRow
                         key={s.clientId}
+                        clientId={s.clientId}
                         name={s.name}
                         here={present.includes(s.clientId)}
                         mine={s.clientId === clientId}

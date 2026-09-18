@@ -1,4 +1,5 @@
 import { useRoom } from "../../net/roomStore";
+import { useVoice } from "../../net/voice";
 import { formatCode, inviteLink } from "../../net/room";
 import { PLAYER_COLORS } from "../../game/data/pawns";
 import { useCompact } from "../useViewport";
@@ -25,6 +26,9 @@ export function RoomPanel() {
   const clientId = useRoom((s) => s.clientId);
   const reconnecting = useRoom((s) => s.reconnecting);
   const restore = useRoom((s) => s.restore);
+  const voiceActive = useVoice((s) => s.active);
+  const voiceError = useVoice((s) => s.error);
+  const stopVoice = useVoice((s) => s.stop);
   const compact = useCompact();
   const { copied, copy } = useCopy();
 
@@ -93,6 +97,26 @@ export function RoomPanel() {
               {w.name}
             </span>
           ))}
+        </div>
+      )}
+
+      {(voiceActive || voiceError) && (
+        <div className="mt-2 flex items-center gap-2">
+          <Icon
+            name={voiceActive ? "mic" : "micOff"}
+            size={14}
+            className={`shrink-0 ${voiceActive ? "text-teal-500" : "text-clay-700"}`}
+          />
+          <span className="text-[11.5px] leading-snug text-ink-700">
+            {voiceActive
+              ? "Vocal actif. Chaque appareil parle directement aux autres."
+              : voiceError}
+          </span>
+          {voiceActive && (
+            <Button face="slate" size="sm" icon="micOff" className="ml-auto shrink-0" onClick={stopVoice}>
+              Quitter
+            </Button>
+          )}
         </div>
       )}
 

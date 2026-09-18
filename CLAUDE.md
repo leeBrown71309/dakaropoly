@@ -179,6 +179,36 @@ matter live there, not in the client.
   chat is one more message type on the socket that is already open: no second
   service, no second connection, nothing stored. Talk belongs to the evening.
 
+### Voice — `src/net/voice.ts`
+
+Peer to peer, in a full mesh: every device dials every other one directly and
+no server carries the audio, so there is no quota to run out of and nothing to
+pay for. The cost lands on the phones instead — each encodes one stream per
+other player, comfortable at four and heavy at eight. That trade is the whole
+reason it has this shape.
+
+- **Signalling rides the room channel**, as a `{ k: "rtc", from, to, signal }`
+  message among the game's own. Every device receives it; each keeps only what
+  carries its own id.
+- **Candidates are not trickled.** Trickling is a dozen or more messages per
+  pair, and at eight players that is hundreds through a channel with a rate
+  limit — which drops them rather than queueing. Waiting for gathering to
+  finish costs a second or two of setup and two messages per pair.
+- **The smaller client id dials.** Both sides learn of each other in the same
+  presence sync, so without a rule both would offer and the negotiations would
+  collide. `shouldOffer` needs no agreement and no extra message.
+- **Presence is the call roster.** The payload carries `voice`, so joining,
+  leaving, muting a whole device or closing a laptop all arrive through the
+  same `syncVoicePeers` path rather than three of them.
+- **Muting flips `track.enabled`**, it does not renegotiate.
+- **The microphone needs a secure context.** `localhost` and the deployed site
+  qualify; `http://192.168.x.x` does not, so voice cannot be tested over the
+  local Wi-Fi at all — only on the published site. The failure says so by name
+  rather than looking broken.
+- **STUN only, no TURN.** Enough for an ordinary home router. Behind a
+  symmetric NAT two peers will not meet, and the only fix is a relay — which
+  is a server, and a bill.
+
 ### Spectators
 
 Somebody standing in the room has no row anywhere. A seat is a database fact;

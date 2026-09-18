@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useRoom } from "../../net/roomStore";
+import { useVoice } from "../../net/voice";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useIsOnline, useWaitingFor } from "../useTurn";
 import { cameraRig } from "../../three/cameraRig";
@@ -50,6 +51,11 @@ export function ActionBar() {
   const toggleChat = useGame((s) => s.toggleChat);
   const chatOpen = useGame((s) => s.chatOpen);
   const unread = useRoom((s) => s.unread);
+  const voiceActive = useVoice((s) => s.active);
+  const voiceMuted = useVoice((s) => s.muted);
+  const voiceBusy = useVoice((s) => s.busy);
+  const startVoice = useVoice((s) => s.start);
+  const toggleMute = useVoice((s) => s.toggleMute);
   const toggleManage = useGame((s) => s.toggleManage);
   const toggleTrade = useGame((s) => s.toggleTrade);
   const toggleSettings = useGame((s) => s.toggleSettings);
@@ -218,6 +224,21 @@ export function ActionBar() {
             onClick={toggleTrade}
           />
           <Fitting icon="receipt" label="Journal" active={logOpen} onClick={toggleLog} />
+          {online && (
+            <Fitting
+              icon={voiceActive && voiceMuted ? "micOff" : "mic"}
+              label={
+                !voiceActive
+                  ? "Activer le micro"
+                  : voiceMuted
+                    ? "Reprendre le micro"
+                    : "Couper le micro"
+              }
+              active={voiceActive && !voiceMuted}
+              disabled={voiceBusy}
+              onClick={() => (voiceActive ? toggleMute() : void startVoice())}
+            />
+          )}
           {online && (
             <span className="relative">
               <Fitting icon="chat" label="Discussion" active={chatOpen} onClick={toggleChat} />

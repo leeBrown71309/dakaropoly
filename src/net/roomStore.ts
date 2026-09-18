@@ -7,6 +7,15 @@ import { pushToast, setActionRelay, useGame } from "../game/store";
 import { sfx } from "../audio/sounds";
 import { ensureSession, supabase } from "./supabase";
 import {
+  attachVoice,
+  detachVoice,
+  handleVoiceWire,
+  syncVoicePeers,
+  voiceIsOn,
+  voicePeers,
+  type VoiceWire,
+} from "./voice";
+import {
   claimSeat,
   createRoom,
   fetchRoomAndSeats,
@@ -36,7 +45,10 @@ type Wire =
   | { k: "roster" }
   | { k: "start" }
   | { k: "resync" }
-  | { k: "chat"; msg: ChatMessage };
+  | { k: "chat"; msg: ChatMessage }
+  // Voice is dialled device to device; only the introductions come through
+  // here, on the socket that is already open.
+  | VoiceWire;
 
 /**
  * Something somebody said. Carried on the channel that is already open for
@@ -70,7 +82,7 @@ export interface Pending {
 export type Watcher = { clientId: string; name: string };
 
 /** What each device puts in the channel's presence payload. */
-type WatchPresence = { at: number; name: string | null };
+type WatchPresence = { at: number; name: string | null; voice: boolean };
 
 interface RoomState {
   code: string | null;
@@ -283,7 +295,7 @@ export const useRoom = create<RoomState>()(
           set({ myName: name });
           // The presence payload carries the name to the roster panel, so it
           // has to follow a rename rather than keep announcing the old one.
-          void channel?.track({ at: Date.now(), name } satisfies WatchPresence);
+          void channel?.track({ at: Date.now(), name, voice: voiceIsOn() } satisfies WatchPresence);
           await refreshSeats(code, set);
           channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
         } catch (e) {
@@ -325,6 +337,7 @@ export const useRoom = create<RoomState>()(
         const { code, clientId } = get();
         setActionRelay(null);
         stopHeartbeat();
+        detachVoice();
 
         // Torn down last, and detached first. Closing the socket takes long
         // enough to matter — it was doing so before the row below had been
@@ -490,6 +503,17 @@ function syncWatchers(): void {
   }
   watchers.sort((a, b) => a.name.localeCompare(b.name, "fr"));
   useRoom.setState({ present: Object.keys(state), watchers });
+
+  // Who has a microphone open falls out of the same pass: somebody joining
+  // the call, leaving it, or closing their laptop all arrive here.
+  const selfId = useRoom.getState().clientId;
+  if (selfId) {
+    const heard = Object.entries(state).map(([clientId, metas]) => ({
+      clientId,
+      voice: (metas[0] as Partial<WatchPresence> | undefined)?.voice === true,
+    }));
+    syncVoicePeers(voicePeers(heard, selfId));
+  }
 }
 
 /** Re-reads the table behind an offer list that has just been refused. */
@@ -629,12 +653,27 @@ async function connect(
       // The name rides along in the payload because a spectator writes no
       // row anywhere: presence is all the room will ever have of them, and
       // it has to say who they are.
-      await channel?.track({ at: Date.now(), name: get().myName } satisfies WatchPresence);
+      await channel?.track({
+        at: Date.now(),
+        name: get().myName,
+        voice: voiceIsOn(),
+      } satisfies WatchPresence);
     }
   });
 
   startHeartbeat(code);
   void touchSeat(code).catch(() => undefined);
+
+  attachVoice({
+    selfId: clientId,
+    send: (wire) => void channel?.send({ type: "broadcast", event: "room", payload: wire }),
+    announce: () =>
+      void channel?.track({
+        at: Date.now(),
+        name: get().myName,
+        voice: voiceIsOn(),
+      } satisfies WatchPresence),
+  });
 
   // Everything the player does is sent rather than played; it lands back
   // through `handle` a moment later.
@@ -673,6 +712,10 @@ async function handle(
 
     case "resync":
       await resync(code, clientId, set);
+      return;
+
+    case "rtc":
+      await handleVoiceWire(msg);
       return;
 
     case "chat": {
