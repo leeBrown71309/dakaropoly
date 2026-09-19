@@ -448,6 +448,13 @@ function afterAuction(s: GameState, events: GameEvent[]): void {
     startAuction(s, events, nextPos);
     return;
   }
+  // The debtor's estate has just been auctioned to the bank. Their turn is
+  // over by definition — passing it to finishResolution would hand the roll
+  // back to a bankrupt player, which no action can ever free.
+  if ((s.players[s.current] as Player).bankrupt) {
+    endTurn(s, events);
+    return;
+  }
   finishResolution(s, events);
 }
 
@@ -463,6 +470,14 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
     if (st.owner !== debtor.id) return;
     if (tile.kind === "street" && st.houses > 0) {
       const refund = st.houses * Math.floor((tile.houseCost ?? 0) / 2);
+      // The buildings go back on the bank's shelf. A hotel handed its four
+      // houses back the moment it was built, so only the hotel itself
+      // returns; houses return as many as are standing. Without this the
+      // stock drained for good, and a player who had mortgaged nothing but
+      // owned two hotels was refused the sale of a building the board no
+      // longer held — leaving bankruptcy as their only legal move.
+      if (st.houses === 5) s.hotelStock += 1;
+      else s.houseStock += st.houses;
       st.houses = 0;
       if (creditor && refund > 0) {
         creditor.money += refund;
@@ -473,8 +488,20 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
       st.owner = creditor.id;
       events.push({ t: "transfer", from: debtor.id, to: creditor.id, pos });
       if (st.mortgaged) {
-        const fee = Math.ceil(mortgageValue(pos) * 0.1);
-        creditor.money = Math.max(creditor.money - fee, 0);
+        // Capped at what the creditor has, the way it always was — but said
+        // out loud now. This was the one place money moved with nothing for
+        // the interface to show, so the journal recorded an inheritance that
+        // quietly cost more than it appeared to.
+        const fee = Math.min(Math.ceil(mortgageValue(pos) * 0.1), creditor.money);
+        if (fee > 0) {
+          creditor.money -= fee;
+          events.push({ t: "money", player: creditor.id, amount: -fee });
+          events.push({
+            t: "toast",
+            text: `${creditor.name} règle 10 % d'intérêt sur ${tile.name} (${fee} F)`,
+            tone: "info",
+          });
+        }
       }
     } else {
       st.owner = null;
@@ -482,6 +509,11 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
     }
   });
   debtor.bankrupt = true;
+  // An eliminated player is not in jail, they are out of the game. The flag
+  // survived the bankruptcy and the roster went on printing a jail mark
+  // beside the name of somebody who had left the table.
+  debtor.inJail = false;
+  debtor.jailAttempts = 0;
   events.push({
     t: "announce",
     kind: "bankruptcy",
@@ -762,6 +794,13 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
   switch (action.t) {
     case "roll": {
       assertPhase(s, "turn-start");
+      // An offer on the table is answered before the board moves. Rolling
+      // under one let the other side accept mid-auction, after the bidding
+      // had committed money the trade then took away: the high bidder
+      // finished the auction owing the bank, with money below zero and no
+      // debt phase to put it right. Answering first removes the whole class
+      // — every route to an auction, a card or a debt goes through a roll.
+      if (s.pendingTrade) throw new Error("Répondez à l'offre en cours avant de lancer");
       rollDice(s, events, player, action.forced);
       break;
     }
@@ -907,6 +946,10 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       s.debt = null;
       if (debt.after === "release-move") {
         freeJail(s, events, player, "fine");
+        // Without this the phase stays "debt" with no debt: walkAndResolve
+        // only runs finishResolution from "resolving", so a payable rent
+        // after the forced jail fine wedged the game forever.
+        s.phase = "resolving";
         walkAndResolve(s, events, player, debt.moveSteps, debt.moveSteps);
       } else {
         s.phase = "resolving";
@@ -921,7 +964,9 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       const debtorTiles = ownedPositions(s, player.id);
       transferAssets(s, events, player, debt.creditor);
       if (debt.creditor === null && debtorTiles.length > 0) {
-        s.pendingAuctions = debtorTiles;
+        // `debtorTiles[0]` is auctioned at once; the queue is what is left.
+        // Keeping the first in both made every estate auction run twice.
+        s.pendingAuctions = debtorTiles.slice(1) as number[];
         startAuction(s, events, debtorTiles[0] as number);
         break;
       }
