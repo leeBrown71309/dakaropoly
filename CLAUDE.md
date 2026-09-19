@@ -4,9 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Dakaropoly** — a full 3D Monopoly played in the browser, with a Dakar (Senegal) board. Hot-seat only: 2–8 players share one screen, one turn at a time. Official Monopoly rules (mandatory auctions, even building, limited bank stock, mortgages, jail, trades, bankruptcy). Personal project, not commercial.
+**Dakaropoly** — a full 3D Monopoly played in the browser, with a Dakar (Senegal) board. 2–8 players, either hot-seat on one screen or online with a room code, one turn at a time. Official Monopoly rules (mandatory auctions, even building, limited bank stock, mortgages, jail, trades, bankruptcy). Personal project, not commercial.
 
 `README.md` and `HANDOFF.md` (both in French) describe the board, the rules covered, what is done, and what remains. Read `HANDOFF.md` before picking up unfinished work.
+
+## Branches
+
+`online-part` is where work happens, `pre-prod` is where it is played against
+before anyone calls it done, and **`main` is what is online** — the Pages
+workflow publishes on a push to it. So a change goes `online-part` →
+`pre-prod` → `main`, and the link people are given always points at code that
+has already been through the middle step.
 
 ## Commands
 
@@ -14,6 +22,7 @@ Package manager is **bun**.
 
 ```bash
 bun install
+cp .env.example .env.local   # online mode; the game runs fine without it
 bun run dev        # http://localhost:5173
 bun run typecheck  # tsc --noEmit
 bun run test       # vitest run (engine + dice physics)
@@ -69,6 +78,15 @@ Adding an event: extend `GameEvent` in `types.ts` **and** add a `case` in `handl
 - **The board is printed, not assembled.** `boardTexture.ts` draws the whole playing surface — tile fields, colour bands, names, prices, icons, corners, centre wordmark — into one 2048² canvas mapped over a single box. Only state-dependent things (owner marks, houses, mortgage marks, decks) are meshes, in `BoardMesh.tsx`. Text is drawn **upright on all four sides** on purpose (one screen, one seat); do not reintroduce per-side rotation.
 - **Tokens are extruded from their own HUD glyph.** `PAWN_SILHOUETTES` in `game/data/pawns.ts` holds one set of path data, rendered flat by `ui/icons/PawnGlyph.tsx` and extruded with a bevel by `PawnMesh.tsx`. Change the path once and both follow.
 - Icons shared between the HUD and the printed board live as path strings in `ui/icons/paths.ts`, consumed as SVG by `Icon.tsx` and as `Path2D` by `boardTexture.ts`.
+- **`DECK_STYLES` in `game/colors.ts` owns both event decks.** Baraka is
+  orange and Teranga blue, and that has to hold in three places at once: the
+  printed square, the pile in the middle of the board, and the card that comes
+  off it. A player landing on one should know which deck they are drawing from
+  by the colour under their token. Teranga used to be printed on cream — the
+  colour of the board itself — so its squares vanished among the properties;
+  both squares are now a field of colour rather than an icon on bare paper. A
+  stripe along one edge would have been wrong: that is what a colour *group*
+  looks like here, and these are not properties.
 - `src/ui/kit/` holds the shared primitives (`Button`, `Surface`, `Money`, `TitleDeed`); build new panels from these rather than restyling divs.
 - **Zero external assets** beyond the two self-hosted webfonts (`@fontsource-variable/*`): every board mark, deck face and die face is canvas-drawn, every sound is synthesized WebAudio in `src/audio/sounds.ts`. Do not add image or audio files.
 - Tailwind v4 via `@tailwindcss/vite` — no `tailwind.config`; tokens live in the `@theme` block of `src/index.css`.
@@ -98,7 +116,217 @@ A phone held in landscape is the smallest board the game supports: roughly 740×
 - **Safe areas are handled once.** `GameScreen` mounts every edge-anchored control inside a `.p-safe` wrapper; absolutely positioned children resolve against its padding box, so they clear a notch without knowing it exists. That wrapper is `pointer-events-none`, so anything mounted in it that the player touches needs `pointer-events-auto`. Full-bleed overlays — the card, the announcement, the modals, the money rain — stay outside it and run to the glass.
 - Never put Tailwind padding utilities on a `.p-safe` element: utilities sit in a later cascade layer and would win.
 - Compact is not only smaller type. The camera pulls back (`COMPACT_VIEW`), the zoom buttons fold into the rail as a single recentre because pinching already zooms, the decision panels hang from the top and scroll instead of centring (`decisionAnchor`), the roster becomes two columns, and the renderer drops to a 1024 shadow map with no MSAA.
+- **`document.fullscreenElement` is not to be trusted on Android.** The
+  browser collapses fullscreen to show a permission prompt — asking for the
+  microphone does it every time — and does not reliably clear the flag or
+  fire `fullscreenchange`. `enterLandscape` therefore asks for fullscreen
+  unconditionally (re-asking while genuinely fullscreen is a no-op) and tries
+  the orientation lock whether or not the request succeeded. Reading the flag
+  to decide whether to ask is what left a phone in landscape with the browser
+  chrome back and no way to return; an early `return` on refusal is what made
+  the rotate gate's button do nothing at all.
+- **Fullscreen cannot be taken back by the code that lost it.** `getUserMedia`
+  resolves long after the tap that called it, so the gesture is spent and no
+  request will be granted. `keepingFullscreen` wraps the call and re-enters at
+  the player's *next* touch, which is a gesture the browser accepts.
 - `installAudioUnlock()` in `main.tsx` opens the audio context on the first gesture. Without it iOS plays the whole game in silence, because sounds are fired from the event queue long after the tap that caused them.
+
+### Online play — `src/net/`
+
+A room is a code, a Supabase Realtime channel and one row holding the state.
+**`supabase/schema.sql` is the whole backend** — tables, indexes and the
+functions every path goes through — kept in the repository and applied by
+hand. Read it before changing anything about rooms or seats: the rules that
+matter live there, not in the client.
+
+- **Actions are relayed, not states.** Every client runs the same pure engine
+  over the same seeded randomness, so replaying the sequence lands them all on
+  the same board *and* regenerates the events that animate it — which shipping
+  a snapshot could never do. Dice cost nothing extra: the physics seed is
+  derived from `(a, b, turnCount)`.
+- **Nothing is applied where it is played.** `dispatch` hands the action to
+  the relay and the channel echoes it back (`broadcast: { self: true }`), so
+  every device — the one that played included — applies from the same place in
+  the same order. With no relay installed, `dispatch` is the hot-seat path,
+  untouched. That seam is the whole integration: `applyLocally` is the old
+  body of `dispatch`.
+- `ackCard` goes over the wire too. A card blocks each client's animation
+  queue, so if only the drawer dismissed it, everyone else would sit at
+  `animating === true` for ever.
+- **`actorFor(state)` decides who may act** — not `game.current`, since an
+  auction belongs to the head of the bidding queue. The HUD reads it through
+  `useIsMyTurn` / `useMySeat` in `src/ui/useTurn.ts`; never paste
+  `=== localPlayerId` into a component.
+- **Seat = pawn.** One unique index keeps both unique, and turn order follows
+  the pawn table. `rooms.seat_order` freezes the mapping at kickoff, because
+  the engine numbers players by their position in the array given to
+  `createGame` — recomputing it later would renumber everyone the moment
+  somebody left.
+- **A chair is a row, not a name in `seat_order`.** The order is the
+  *numbering*: it keeps naming whoever was given that engine player at
+  kickoff, which is exactly what lets them come back to the same chair.
+  Occupancy is a row in `room_players`. `seatOf` demands both agree, because
+  reading the order alone let a player leave, return through the spectator
+  door, and be sat straight back down — able to play, missing from their own
+  spectator list, and a player *and* a spectator at once to everyone else.
+  The same mistake in `syncWatchers` is what hid them from that list, and the
+  same one in `mayHear` would have let them talk through a muted spectator
+  switch.
+- **`watching` is remembered for the tab**, because `seat_order` still names
+  a spectator who used to play: without it, reloading would reclaim the chair
+  they deliberately got up from.
+- **Identity is per tab** (`sessionStorage`), not per browser. Two tabs of one
+  browser sharing an id meant the second player silently took over the first
+  one's seat — and two tabs is how anyone tries this before a real game.
+- **The tables cannot be read at all, and nothing writes to one directly.**
+  Rooms and rosters are reachable only through `get_room(code)`, and writes
+  only through `create_room`, `claim_seat`, `resume_seat`, `leave_room`,
+  `open_room`, `touch_seat` and `advance_room`. Those functions are
+  `SECURITY DEFINER`, take the caller's identity from `auth.uid()` rather than
+  from the request body, and require a session. So the room code is a real key
+  — there is no way to list other people's games — and passing somebody else's
+  client id gets you nowhere.
+- Anonymous sign-in is **required**; `ensureSession` fails with a message
+  naming the setting rather than letting the game die on an SQL error later.
+- A policy that subqueries another table is a trap here: `rooms_update` tested
+  membership by reading `room_players`, which is denied, so kicking off a game
+  updated nothing and reported no error. Leaving a room had the same shape —
+  a plain `delete` that row level security quietly filtered to nothing, which
+  PostgREST reports as a success — so a player who pressed Quitter kept their
+  chair. **Both were fixed the same way, and it is the rule here: authorisation
+  lives inside the functions, and every call checks the error it gets back.**
+- **`localPlayerId === null` means two different things**: a hot-seat game,
+  where one device speaks for whoever is to move, and an online spectator, who
+  speaks for nobody. `online` in the store is what tells them apart, and
+  `mayAct` in `selectors.ts` is the only place that decides. Reading the seat
+  alone handed spectators the whole table.
+- Creating a room sweeps rooms untouched for 24 hours, so finished games do
+  not accumulate. There is no scheduler to maintain.
+- **A trade is an offer, not a transfer.** `offer-trade` only puts
+  `pendingTrade` on the board; nothing moves until the other player sends
+  `accept-trade` from their own device. `tradeRoleFor` in `selectors.ts` says
+  which of the two sides a device is on — the third player at the table gets
+  neither pane, only the toast. An offer is checked when it is made *and*
+  again when it is answered, because the board is free to move in between,
+  and it lapses with the turn it was made in rather than outliving it.
+- **Chat rides the game channel.** Realtime *is* a WebSocket, so the written
+  chat is one more message type on the socket that is already open: no second
+  service, no second connection, nothing stored. Talk belongs to the evening.
+
+### Voice — `src/net/voice.ts`
+
+Peer to peer, in a full mesh: every device dials every other one directly and
+no server carries the audio, so there is no quota to run out of and nothing to
+pay for. The cost lands on the phones instead — each encodes one stream per
+other player, comfortable at four and heavy at eight. That trade is the whole
+reason it has this shape.
+
+- **Signalling rides the room channel**, as a `{ k: "rtc", from, to, signal }`
+  message among the game's own. Every device receives it; each keeps only what
+  carries its own id.
+- **Candidates are not trickled.** Trickling is a dozen or more messages per
+  pair, and at eight players that is hundreds through a channel with a rate
+  limit — which drops them rather than queueing. Waiting for gathering to
+  finish costs a second or two of setup and two messages per pair.
+- **The smaller client id dials.** Both sides learn of each other in the same
+  presence sync, so without a rule both would offer and the negotiations would
+  collide. `shouldOffer` needs no agreement and no extra message.
+- **Presence is the call roster.** The payload carries `voice`, so joining,
+  leaving, muting a whole device or closing a laptop all arrive through the
+  same `syncVoicePeers` path rather than three of them.
+- **Muting flips `track.enabled`**, it does not renegotiate.
+- **Spectators need the host's permission**, `rooms.spectator_voice`, off
+  until the host says otherwise. A table seats eight and a room holds any
+  number of people standing behind it; a dozen of them talking at once buries
+  the game. The rule is `mayTalk` and it is applied in three places, because
+  hiding one button is not a rule: the disallowed device hangs up on itself,
+  nobody puts it in their peer list, and `mayHear` refuses its signalling —
+  otherwise a spectator who forced their own microphone on would be politely
+  answered by every player.
+- **A leg that dies is dialled again.** WebRTC reports `disconnected` for an
+  ordinary blip and usually recovers, so that gets `RECOVER_MS` of grace;
+  `failed` and `closed` are torn down at once. Without this, a peer who left
+  the call and came straight back was never redialled — presence had not
+  changed by the time the second sync ran, so the stale connection looked
+  like a live one to everyone else.
+- **The microphone needs a secure context.** `localhost` and the deployed site
+  qualify; `http://192.168.x.x` does not, so voice cannot be tested over the
+  local Wi-Fi at all — only on the published site. The failure says so by name
+  rather than looking broken.
+- **STUN only, no TURN.** Enough for an ordinary home router. Behind a
+  symmetric NAT two peers will not meet, and the only fix is a relay — which
+  is a server, and a bill.
+
+### Spectators
+
+Somebody standing in the room has no row anywhere. A seat is a database fact;
+watching is a fact about the channel, so the watcher list is rebuilt from
+Realtime presence on every sync, and the name comes from what each device puts
+in its own presence payload. They receive the same actions, replay them
+through the same engine, and write nothing.
+
+`localPlayerId === null` means two different things — hot-seat, where one
+device speaks for whoever is to move, and a spectator, who speaks for nobody.
+`online` in the store tells them apart; `mayAct` in `selectors.ts` is the only
+place that decides. Reading the seat alone handed spectators the whole table.
+`dispatch` refuses them a second time, because the relay would broadcast
+whatever slipped through to everyone.
+
+### Leaving a room, and coming back
+
+A seat is not abandoned the moment a screen goes dark. `room_players.last_seen`
+is refreshed every twenty seconds by `touch_seat`, and on every move; a chair
+is offered to somebody else only once it has been quiet for **75 seconds** —
+long enough to survive a tunnel, a locked phone or a reload. That threshold
+lives in SQL, and `get_room` returns `absent` per seat, because a client that
+could assert "they are gone" could take a chair out from under someone.
+
+- **Leaving on purpose gives the chair up at once**: `leave_room` deletes the
+  row, and drops the room too when the host walks out of a lobby.
+- **The room is remembered for the life of the tab** — `sessionStorage`, the
+  same lifetime as the identity that holds the seat. Anywhere longer-lived and
+  a second tab would try to walk back into a game it was never in.
+- **A reload rejoins by itself.** `restore()` runs from `App.tsx` and takes the
+  chair back with `resume_seat`, which always lets a device reclaim its *own*
+  seat however long it was away. A room that has disappeared sends the player
+  home; anything else — no signal, a server having a moment — keeps the room
+  and offers Reconnecter in the settings panel rather than binning the evening.
+- **Between the reload and the channel coming back, nothing may be played.**
+  The board is restored from local storage ready to go, so a *refusing* relay
+  is installed at rehydrate and replaced by the real one once connected. An
+  action applied in that gap would land on one device and nowhere else.
+- **Taking a seat rewrites `rooms.seat_order` at that index** rather than
+  rebuilding the list: the engine numbers players by their position in it, so
+  rebuilding would renumber everyone still at the table. The name and pawn come
+  from the board, not from the roster row being replaced.
+- Arrivals and departures are announced as toasts driven by Realtime presence,
+  and only once play has begun — in the lobby the roster says it better, and
+  the slips are not mounted on that screen. The first 1.5 s after subscribing
+  is silent, because the server replays everyone already in the room.
+- **The room code lives in the settings panel** (`RoomPanel`) for the whole
+  game, with the invitation link beside it. It is the only way back in, and it
+  otherwise disappears the moment the lobby closes.
+
+### Moving a token
+
+A card that says "advance to" means the token **travels**: `walkTo` in the
+engine emits `move-steps` for the forward distance, collecting the salary if
+it goes past the Départ. Nothing teleports any more. Snapping a token to its
+destination looked like nothing had happened — the piece was simply somewhere
+else the next time the player looked, which read as the board being broken.
+
+Long walks would be unwatchable at the ordinary pace (a card can send a token
+38 tiles, seven seconds of hopping), so `handleEvent` caps a whole walk at
+`WALK_BUDGET` and scampers when it has to.
+
+### Overlays that have left but are still there
+
+A modal animating out is still in the document, and an invisible layer with
+pointer events is a click trap. `CardModal` cost an hour of debugging for
+exactly this: its backdrop kept swallowing clicks for the two seconds its
+spring took to settle, right as the buy panel appeared underneath. Backdrops
+are `pointer-events-none`; only the card itself is interactive. Do not try to
+animate `pointerEvents` in an `exit` target — Framer Motion does not apply it.
 
 ### Dice
 

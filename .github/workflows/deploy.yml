@@ -1,0 +1,66 @@
+name: Deploy
+
+# Publishes the board to GitHub Pages on every push to main.
+#
+# pre-prod stays the stage before it — what lands there is what gets played
+# against before anyone calls it done — but a repository has a single Pages
+# site, and the one people are given a link to should be the code that has
+# finished going through that stage. It is main that is online.
+#
+# pre-prod can still be published on purpose from the Actions tab, which is
+# what `workflow_dispatch` is for.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# A deploy already under way is left to finish; only queued ones are dropped.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Typecheck and test
+        run: |
+          bun x tsc -p tsconfig.json --noEmit
+          bun run test
+
+      - name: Build
+        # Both values are public by design — the key grants only what the row
+        # level security policies allow. They live in repository secrets so
+        # the project can be pointed somewhere else without touching the code.
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_KEY }}
+        run: bun run build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

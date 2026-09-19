@@ -5,6 +5,7 @@ import type { TileDef } from "../game/types";
 import { useGame } from "../game/store";
 import { createBoardTexture } from "./boardTexture";
 import { deckTexture } from "./textures";
+import { DECK_STYLES } from "../game/colors";
 import {
   HALF,
   RING,
@@ -198,8 +199,20 @@ function TileOverlay({ pos }: { pos: number }) {
 function Decks() {
   const decks = useMemo(
     () => [
-      { x: -2.35, z: -2.55, rot: -0.19, tex: deckTexture("Baraka", "#E8A23B", "#3E2A0C") },
-      { x: 2.35, z: -2.55, rot: 0.17, tex: deckTexture("Teranga", "#F1E7D2", "#23372F") },
+      // The piles are the same two colours as the squares they are drawn
+      // from, and as the cards that come off them.
+      {
+        x: -2.35,
+        z: -2.55,
+        rot: -0.19,
+        tex: deckTexture(DECK_STYLES.chance.name, DECK_STYLES.chance.face[1], DECK_STYLES.chance.on),
+      },
+      {
+        x: 2.35,
+        z: -2.55,
+        rot: 0.17,
+        tex: deckTexture(DECK_STYLES.chest.name, DECK_STYLES.chest.face[1], DECK_STYLES.chest.on),
+      },
     ],
     [],
   );

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { BOARD } from "../game/data/board";
-import { GROUP_COLORS } from "../game/colors";
+import { DECK_STYLES, GROUP_COLORS } from "../game/colors";
 import type { TileDef } from "../game/types";
 import { OUTLINE_PATHS, type OutlineName } from "../ui/icons/paths";
 import { HALF, RING, INNER, BAND_DEPTH, tileCell, OUTWARD } from "./geometry";
@@ -173,7 +173,50 @@ function strokeRect(ctx: CanvasRenderingContext2D, r: Rect, color: string, width
   ctx.strokeRect(r.x, r.y, r.w, r.h);
 }
 
-const DECK_ICON: Record<string, OutlineName> = { chance: "cowrie", chest: "teapot" };
+const DECK_ICON: Record<"chance" | "chest", OutlineName> = { chance: "cowrie", chest: "teapot" };
+
+/**
+ * A Baraka or Teranga square, printed as a field of colour rather than an
+ * icon on bare paper.
+ *
+ * A stripe along one edge is what a colour group looks like on this board,
+ * and these are not properties — so the whole square is washed instead. It
+ * is also what carries: the old ones were paper on paper, and from a seat
+ * at the table they read as just another street.
+ */
+function drawDeckTile(
+  ctx: CanvasRenderingContext2D,
+  pos: number,
+  tile: TileDef,
+  deck: "chance" | "chest",
+): void {
+  const style = DECK_STYLES[deck];
+  const rect = cellRect(pos);
+
+  fillRect(ctx, rect, style.tint);
+  // The same shading every other tile gets, so the colour still sits on the
+  // board rather than on top of it.
+  const shade = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.h);
+  shade.addColorStop(0, "rgba(255,255,255,0.14)");
+  shade.addColorStop(1, "rgba(70,48,16,0.10)");
+  ctx.fillStyle = shade;
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  strokeRect(ctx, rect, SEPARATOR, 2.5);
+
+  const area = contentRect(pos, false);
+  const short = Math.min(area.w, area.h);
+  drawOutline(ctx, DECK_ICON[deck], area.x + area.w / 2, area.y + area.h * 0.3, short * 0.52, style.strong, 2.1);
+
+  const nameArea: Rect = { x: area.x, y: area.y + area.h * 0.56, w: area.w, h: area.h * 0.3 };
+  drawFitted(ctx, tile.name, nameArea, {
+    font: SANS,
+    color: style.on,
+    max: 25,
+    min: 14,
+    upper: true,
+    tracking: 0.5,
+  });
+}
 
 function drawStreet(ctx: CanvasRenderingContext2D, pos: number, tile: TileDef): void {
   if (tile.group) {
@@ -348,7 +391,7 @@ function draw(ctx: CanvasRenderingContext2D): void {
         break;
       case "chance":
       case "chest":
-        drawIconTile(ctx, pos, tile, DECK_ICON[tile.kind] ?? "cowrie", tile.kind === "chance" ? "#A8701F" : "#1E6F6B", "");
+        drawDeckTile(ctx, pos, tile, tile.kind);
         break;
       default:
         drawCorner(ctx, pos, tile);

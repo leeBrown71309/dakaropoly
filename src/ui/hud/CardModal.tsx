@@ -1,37 +1,53 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn } from "../useTurn";
 import { Button } from "../kit/Button";
 import { BrassRule } from "../kit/Surface";
 import { Icon } from "../icons/Icon";
+import { DECK_STYLES } from "../../game/colors";
+
+/**
+ * The card stock, built from the same two colours as the squares the cards
+ * are drawn from — orange for Baraka, blue for Teranga. Only the icon is
+ * local; everything else comes from `DECK_STYLES` so the board, the pile and
+ * the card can never drift apart.
+ */
+const DECK_ICON = { chance: "cowrie", chest: "teapot" } as const;
 
 const DECK_STYLE = {
-  chance: {
-    name: "Baraka",
-    icon: "cowrie" as const,
-    face: "linear-gradient(172deg,#F6DCA6 0%,#EBC680 55%,#DDB166 100%)",
-    ink: "#3E2A0C",
-    trim: "#A8701F",
-  },
-  chest: {
-    name: "Teranga",
-    icon: "teapot" as const,
-    face: "linear-gradient(172deg,#FBF6EA 0%,#F1E7D2 55%,#E5D8BC 100%)",
-    ink: "#23372F",
-    trim: "#1E6F6B",
-  },
+  chance: deckFace("chance"),
+  chest: deckFace("chest"),
 };
+
+function deckFace(deck: "chance" | "chest") {
+  const style = DECK_STYLES[deck];
+  return {
+    name: style.name,
+    icon: DECK_ICON[deck],
+    face: `linear-gradient(172deg,${style.face[0]} 0%,${style.face[1]} 55%,${style.face[2]} 100%)`,
+    ink: style.on,
+    trim: style.strong,
+  };
+}
 
 export function CardModal() {
   const cardView = useGame((s) => s.cardView);
   const ackCard = useGame((s) => s.ackCard);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
 
+  // The backdrop never takes pointer events. The card leaves on a spring that
+  // takes about two seconds to settle, and until it does this layer is still
+  // in the document — invisible, but perfectly capable of swallowing every
+  // click meant for the board, at exactly the moment the buy panel appears
+  // underneath it. Only the card itself is interactive, which is all it ever
+  // needed to be.
   return (
     <AnimatePresence>
       {cardView && (
         <motion.div
-          className="absolute inset-0 z-50 flex items-center justify-center"
+          className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -45,13 +61,14 @@ export function CardModal() {
             animate={{ y: 0, rotate: -1.4, scale: 1, opacity: 1 }}
             exit={{ y: 90, rotate: 9, scale: 0.9, opacity: 0 }}
             transition={{ type: "spring", stiffness: 210, damping: 21 }}
-            className={compact ? "mx-3 w-[262px]" : "mx-4 w-[330px]"}
+            className={`pointer-events-auto ${compact ? "mx-3 w-[262px]" : "mx-4 w-[330px]"}`}
           >
             <Deck
               deck={cardView.deck}
               title={cardView.card.title}
               text={cardView.card.text}
               compact={compact}
+              canAck={myTurn}
               onAck={ackCard}
             />
           </motion.div>
@@ -66,12 +83,14 @@ function Deck({
   title,
   text,
   compact,
+  canAck,
   onAck,
 }: {
   deck: "chance" | "chest";
   title: string;
   text: string;
   compact: boolean;
+  canAck: boolean;
   onAck: () => void;
 }) {
   const s = DECK_STYLE[deck];
@@ -123,9 +142,10 @@ function Deck({
           size={compact ? "sm" : "md"}
           block
           className={compact ? "mt-3" : "mt-5"}
+          disabled={!canAck}
           onClick={onAck}
         >
-          C'est noté
+          {canAck ? "C'est noté" : "En attente…"}
         </Button>
       </div>
     </div>

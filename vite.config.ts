@@ -2,11 +2,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss()],
+  // GitHub Pages serves a project site from a subfolder, but the dev server
+  // and the LAN preview stay at the root — otherwise every local URL would
+  // need the prefix typed in by hand.
+  base: command === "build" ? "/dakaropoly/" : "/",
   // three-stdlib (pulled in by drei) and three's own example modules can each
   // resolve their own copy of three; two instances break the `instanceof`
-  // checks React Three Fiber relies on when attaching objects.
+  // checks React Three Fiber relies on.
   resolve: {
     dedupe: ["three", "react", "react-dom"],
   },
@@ -22,4 +26,4 @@ export default defineConfig({
     host: true,
     port: 4173,
   },
-});
+}));

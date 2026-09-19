@@ -8,6 +8,7 @@ import { AuctionPanel } from "../hud/AuctionPanel";
 import { DebtPanel } from "../hud/DebtPanel";
 import { ManagePanel } from "../hud/ManagePanel";
 import { TradeModal } from "../hud/TradeModal";
+import { TradeOffer } from "../hud/TradeOffer";
 import { CardModal } from "../hud/CardModal";
 import { Announcement } from "../hud/Announcement";
 import { SettingsModal } from "../hud/SettingsModal";
@@ -46,6 +47,7 @@ export function GameScreen() {
       </div>
 
       <TradeModal />
+      <TradeOffer />
       <CardModal />
       <Announcement />
       <SettingsModal />

@@ -9,6 +9,7 @@ import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
 import { Icon, type IconName } from "../icons/Icon";
+import { RoomPanel } from "./RoomPanel";
 
 type Tab = "reglages" | "groupes" | "regles";
 
@@ -147,6 +148,9 @@ function SettingsTab() {
 
   return (
     <div>
+      {/* Only mounted when this device is in a room; silent otherwise. */}
+      <RoomPanel />
+
       <Slider
         label="Durée des messages"
         hint="Combien de temps les petits billets restent épinglés en bas à gauche."

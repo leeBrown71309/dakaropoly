@@ -125,3 +125,57 @@ export function netWorthOf(s: GameState, player: Player): number {
 export function ownedPositions(s: GameState, playerId: number): number[] {
   return BOARD.map((_, pos) => pos).filter((pos) => s.tiles[pos]?.owner === playerId);
 }
+
+/**
+ * The one player entitled to act right now, or `null` when the game is over.
+ *
+ * It is *not* always `s.current`: during an auction the floor belongs to the
+ * head of the rotating bidding queue, and everyone else — the player whose
+ * turn it nominally is included — must wait. Online, this is what decides
+ * whose device shows buttons, so every gate reads it rather than comparing
+ * against `current` by hand.
+ */
+export function actorFor(s: GameState): number | null {
+  if (s.phase === "game-over") return null;
+  if (s.phase === "auction" && s.auction) return s.auction.order[0] ?? null;
+  return s.current;
+}
+
+/**
+ * Whether a device is entitled to play right now.
+ *
+ * Hot-seat, one device speaks for whoever is to move, so the answer is always
+ * yes. Online, only the device holding the legal actor's seat — and a
+ * spectator holds no seat at all, so never. Those two `null`s mean opposite
+ * things, which is exactly why `online` is passed rather than inferred.
+ */
+export function mayAct(s: GameState, online: boolean, localPlayerId: number | null): boolean {
+  if (!online) return true;
+  return localPlayerId !== null && actorFor(s) === localPlayerId;
+}
+
+/** What an offer on the table asks of this device, if anything. */
+export type TradeRole = "answer" | "await" | null;
+
+/**
+ * Where this device stands in a pending trade.
+ *
+ * `answer` puts Accepter and Refuser on screen, `await` the offer and a way
+ * to take it back. Everyone else gets neither: a trade between two other
+ * players is their business, and a modal over the board would be rude.
+ *
+ * Hot-seat always answers. One screen means the device is passed, or leaned
+ * over, and the person being offered the deal is standing right there.
+ */
+export function tradeRoleFor(
+  s: GameState,
+  online: boolean,
+  localPlayerId: number | null,
+): TradeRole {
+  const pending = s.pendingTrade;
+  if (!pending) return null;
+  if (!online) return "answer";
+  if (localPlayerId === pending.offer.to) return "answer";
+  if (localPlayerId === pending.from) return "await";
+  return null;
+}

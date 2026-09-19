@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn } from "../useTurn";
 import { BOARD } from "../../game/data/board";
 import { GROUP_COLORS } from "../../game/colors";
 import { ownedPositions } from "../../game/selectors";
@@ -9,8 +10,8 @@ import type { Player } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
 
 /** A property chip that can be laid on the table as part of an offer. */
 function PropChip({
@@ -67,9 +68,7 @@ function OfferColumn({
   return (
     <div className="flex min-h-0 flex-col">
       <div className="mb-1.5 flex items-center gap-2">
-        <span style={{ color: owner.color }}>
-          <PawnGlyph pawn={owner.pawn} size={compact ? 16 : 20} />
-        </span>
+        <PlayerMark player={owner} size={compact ? 16 : 20} />
         <span className={`u-display text-ink-900 ${compact ? "text-[12px]" : "text-[13.5px]"}`}>
           {owner.name}
         </span>
@@ -107,6 +106,7 @@ export function TradeModal() {
   const toggleTrade = useGame((s) => s.toggleTrade);
   const dispatch = useGame((s) => s.dispatch);
   const compact = useCompact();
+  const myTurn = useIsMyTurn();
 
   const [to, setTo] = useState<number | null>(null);
   const [giveMoney, setGiveMoney] = useState(0);
@@ -119,7 +119,15 @@ export function TradeModal() {
   const current = game.players[game.current];
   if (!current) return null;
 
-  const canTrade = game.phase === "post-roll" || game.phase === "turn-start";
+  // Online too, now that an offer has to be answered rather than executed
+  // on the spot. One at a time: a second would have to be answered against a
+  // board the first is about to change. The turn check is the builder's own
+  // rather than only the rail's, because the engine credits an offer to
+  // whoever is to move — it would otherwise be made in their name.
+  const canTrade =
+    myTurn &&
+    !game.pendingTrade &&
+    (game.phase === "post-roll" || game.phase === "turn-start");
   const target = to !== null ? game.players[to] : null;
 
   const reset = () => {
@@ -198,9 +206,7 @@ export function TradeModal() {
                             boxShadow: "inset 0 0 0 1px rgba(110,86,52,.22)",
                           }}
                         >
-                          <span style={{ color: p.color }}>
-                            <PawnGlyph pawn={p.pawn} size={compact ? 18 : 24} />
-                          </span>
+                          <PlayerMark player={p} size={compact ? 18 : 24} />
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-bold text-ink-900">{p.name}</span>
                             <Money amount={p.money} className="text-[11.5px] text-ink-500" />
@@ -216,8 +222,8 @@ export function TradeModal() {
                       compact ? "text-[12px]" : "text-[13px]"
                     }`}
                   >
-                    <span className="u-display text-[15px] text-ink-900">{target.name}</span>, acceptes-tu cet
-                    échange&nbsp;?
+                    Envoyer cette proposition à{" "}
+                    <span className="u-display text-[15px] text-ink-900">{target.name}</span>&nbsp;?
                   </p>
                   <div className="grid grid-cols-2 gap-3">
                     <Summary owner={current} caption="donne" money={giveMoney} props={giveProps} />
@@ -233,13 +239,13 @@ export function TradeModal() {
                       icon="check"
                       onClick={() => {
                         dispatch({
-                          t: "propose-trade",
+                          t: "offer-trade",
                           offer: { to: target.id, giveMoney, giveProps, takeMoney, takeProps },
                         });
                         close();
                       }}
                     >
-                      Accepter l'échange
+                      Envoyer
                     </Button>
                   </div>
                 </div>
@@ -296,7 +302,8 @@ export function TradeModal() {
   );
 }
 
-function Summary({
+/** Also read by `TradeOffer`, so both sides of a deal are laid out alike. */
+export function Summary({
   owner,
   caption,
   money,
@@ -313,9 +320,7 @@ function Summary({
       style={{ background: "rgba(120,95,60,.07)", boxShadow: "inset 0 0 0 1px rgba(110,86,52,.2)" }}
     >
       <div className="mb-1.5 flex items-center gap-2">
-        <span style={{ color: owner.color }}>
-          <PawnGlyph pawn={owner.pawn} size={18} />
-        </span>
+        <PlayerMark player={owner} size={18} />
         <span className="text-[12.5px] font-bold text-ink-900">{owner.name}</span>
         <Label className="ml-auto">{caption}</Label>
       </div>

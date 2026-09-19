@@ -6,8 +6,9 @@ import type { GameState } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { Money } from "../kit/Money";
-import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon, type IconName } from "../icons/Icon";
+import { PlayerMark } from "../icons/PlayerMark";
+import { quitToHome } from "../leaveGame";
 
 interface AwardDef {
   icon: IconName;
@@ -65,7 +66,7 @@ function computeAwards(game: GameState): { icon: IconName; label: string; name: 
 export function GameOver() {
   const game = useGame((s) => s.game);
   const openSetup = useGame((s) => s.openSetup);
-  const goHome = useGame((s) => s.goHome);
+
   const compact = useCompact();
   if (!game) return null;
 
@@ -141,9 +142,7 @@ export function GameOver() {
                       >
                         {i + 1}
                       </span>
-                      <span style={{ color: p.color }} className="shrink-0">
-                        <PawnGlyph pawn={p.pawn} size={compact ? 18 : 22} />
-                      </span>
+                      <PlayerMark player={p} size={compact ? 18 : 22} />
                       <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-ink-900">
                         {p.name}
                         {p.bankrupt && <span className="ml-2 u-label text-clay-700">Faillite</span>}
@@ -185,7 +184,7 @@ export function GameOver() {
               <Button face="gold" size={compact ? "md" : "lg"} icon="dice" onClick={openSetup}>
                 Revanche
               </Button>
-              <Button face="bone" size={compact ? "md" : "lg"} icon="arrowLeft" onClick={goHome}>
+              <Button face="bone" size={compact ? "md" : "lg"} icon="arrowLeft" onClick={quitToHome}>
                 Menu
               </Button>
             </div>

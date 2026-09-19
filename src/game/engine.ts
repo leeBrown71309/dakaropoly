@@ -60,6 +60,7 @@ export function createGame(
     winner: null,
     pendingAuctions: [],
     turnEnded: false,
+    pendingTrade: null,
     decks: { chance: [], chest: [] },
     discards: { chance: [], chest: [] },
     rng: seed,
@@ -103,9 +104,28 @@ function assertPhase(s: GameState, kind: PhaseKind): void {
   if (s.phase !== kind) throw new Error("Action impossible maintenant");
 }
 
+/** Spending your own way — building, lifting a mortgage. */
 function assertManageable(s: GameState): void {
   if (s.phase !== "turn-start" && s.phase !== "post-roll" && s.phase !== "buy-decision") {
     throw new Error("Gestion impossible maintenant");
+  }
+}
+
+/**
+ * Raising cash — selling buildings, mortgaging. Allowed everywhere managing
+ * is, **plus while in debt**: a player rich in streets but short of notes must
+ * be able to liquidate rather than being forced into a bankruptcy they could
+ * have paid their way out of.
+ */
+function assertRaiseFunds(s: GameState): void {
+  if (s.phase === "debt") return;
+  assertManageable(s);
+}
+
+/** Guards an untrusted board index, so it fails as a rule, not a TypeError. */
+function assertBoardPos(pos: number): void {
+  if (!Number.isInteger(pos) || pos < 0 || pos >= BOARD.length) {
+    throw new Error("Case inconnue");
   }
 }
 
@@ -260,14 +280,29 @@ function walkAndResolve(s: GameState, events: GameEvent[], player: Player, steps
   if (s.phase === "resolving") finishResolution(s, events);
 }
 
-function moveTo(s: GameState, events: GameEvent[], player: Player, pos: number, rollSum: number): void {
+/**
+ * Walks a token forward to a tile, the way a hand moves it around the board.
+ *
+ * A card that says "advance to" means exactly that: the token travels, and
+ * collects the salary if it goes past the Départ on the way. Snapping it
+ * there instead left the player with no idea it had moved at all — the piece
+ * was simply somewhere else the next time they looked.
+ */
+function walkTo(events: GameEvent[], player: Player, pos: number): void {
+  const steps = (pos - player.position + 40) % 40;
+  if (steps > 0) events.push({ t: "move-steps", player: player.id, steps });
+  // Walking forward past the Départ is the same condition as landing on a
+  // lower-numbered tile, since the only way there is round the corner.
   if (pos < player.position) {
     player.money += SALARY;
     events.push({ t: "money", player: player.id, amount: SALARY });
     events.push({ t: "toast", text: `${player.name} passe par le Départ (+200 F)`, tone: "good" });
   }
   player.position = pos;
-  events.push({ t: "teleport", player: player.id, pos });
+}
+
+function moveTo(s: GameState, events: GameEvent[], player: Player, pos: number, rollSum: number): void {
+  walkTo(events, player, pos);
   resolveTile(s, events, rollSum);
 }
 
@@ -343,6 +378,11 @@ function finishResolution(s: GameState, events: GameEvent[]): void {
 }
 
 function endTurn(s: GameState, events: GameEvent[]): void {
+  // An offer belongs to the turn it was made in. Letting one sit through
+  // somebody else's turn would mean accepting it against a board that has
+  // moved on, and offers would pile up one per player.
+  lapseTrade(s, events);
+
   const active = activePlayers(s);
   if (active.length <= 1) {
     s.phase = "game-over";
@@ -450,8 +490,55 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
   });
 }
 
+/** Clears an unanswered offer, saying so if there was one. */
+function lapseTrade(s: GameState, events: GameEvent[]): void {
+  const pending = s.pendingTrade;
+  if (!pending) return;
+  s.pendingTrade = null;
+  const from = s.players[pending.from];
+  const to = s.players[pending.offer.to];
+  events.push({
+    t: "toast",
+    text: `Offre de ${from?.name ?? "?"} à ${to?.name ?? "?"} expirée`,
+    tone: "info",
+  });
+}
+
+/**
+ * Moves what an accepted offer says to move.
+ *
+ * Split out from the action so that it happens in exactly one place: the
+ * offer is checked when it is made and checked again when it is answered,
+ * and both roads have to lead to the same transfer.
+ */
+function settleTrade(s: GameState, events: GameEvent[], from: Player, offer: TradeOffer): void {
+  const target = s.players[offer.to] as Player;
+  if (offer.giveMoney > 0) {
+    from.money -= offer.giveMoney;
+    target.money += offer.giveMoney;
+    events.push({ t: "money", player: target.id, amount: offer.giveMoney });
+  }
+  if (offer.takeMoney > 0) {
+    target.money -= offer.takeMoney;
+    from.money += offer.takeMoney;
+    events.push({ t: "money", player: from.id, amount: offer.takeMoney });
+  }
+  for (const pos of offer.giveProps) {
+    (s.tiles[pos] as TileState).owner = offer.to;
+    events.push({ t: "transfer", from: from.id, to: offer.to, pos });
+  }
+  for (const pos of offer.takeProps) {
+    (s.tiles[pos] as TileState).owner = from.id;
+    events.push({ t: "transfer", from: offer.to, to: from.id, pos });
+  }
+}
+
 function validateTrade(s: GameState, player: Player, offer: TradeOffer): void {
   if (offer.to === player.id) throw new Error("Échange avec soi-même ?");
+  if (!s.players[offer.to]) throw new Error("Joueur inconnu");
+  for (const pos of [...offer.giveProps, ...offer.takeProps]) assertBoardPos(pos);
+  if (!Number.isInteger(offer.giveMoney) || offer.giveMoney < 0) throw new Error("Somme invalide");
+  if (!Number.isInteger(offer.takeMoney) || offer.takeMoney < 0) throw new Error("Somme invalide");
   const target = s.players[offer.to] as Player;
   if (target.bankrupt) throw new Error("Ce joueur est éliminé");
   if (offer.giveMoney > player.money) throw new Error("Fonds insuffisants");
@@ -473,11 +560,28 @@ function drawCard(s: GameState, events: GameEvent[], deck: "chance" | "chest"): 
     s.decks[deck] = shuffled(s, s.discards[deck]);
     s.discards[deck] = [];
   }
-  const cardId = s.decks[deck].shift() as string;
+  const cardId = s.decks[deck].shift();
+  // A deck can only be empty here if every one of its cards is held as a
+  // "sortie de prison"; with 16 cards and one such card that cannot happen.
+  if (cardId === undefined) throw new Error("Paquet vide");
   (s.players[s.current] as Player).stats.cardsDrawn += 1;
   events.push({ t: "show-card", deck, cardId });
   s.card = { deck, cardId };
   s.phase = "card";
+}
+
+/**
+ * Returns a resolved card to the bottom of its discard pile, so the deck can
+ * be rebuilt from it once exhausted. Without this the sixteenth draw empties
+ * the deck for good and the next one wedges the game in the `card` phase.
+ *
+ * A "sortie de prison" card is the one exception: its holder keeps it. It
+ * simply leaves circulation when spent rather than going back to the pile —
+ * one card fewer in a deck of sixteen changes nothing anyone can notice.
+ */
+function discardCard(s: GameState, deck: "chance" | "chest", cardId: string): void {
+  if (CARDS_BY_ID[cardId]?.effect.k === "jail-free") return;
+  s.discards[deck].push(cardId);
 }
 
 function applyCardEffect(s: GameState, events: GameEvent[], cardId: string): void {
@@ -537,8 +641,9 @@ function applyCardEffect(s: GameState, events: GameEvent[], cardId: string): voi
     }
     case "nearest-station": {
       const target = nextOfKind(player.position, STATION_POS);
-      player.position = target;
-      events.push({ t: "teleport", player: player.id, pos: target });
+      // Walks there, and collects the salary if the nearest one is round past
+      // the Départ — which it never did before.
+      walkTo(events, player, target);
       const st = s.tiles[target] as TileState;
       if (st.owner === null) {
         s.buyTile = target;
@@ -565,8 +670,9 @@ function applyCardEffect(s: GameState, events: GameEvent[], cardId: string): voi
     }
     case "nearest-utility": {
       const target = nextOfKind(player.position, UTILITY_POS);
-      player.position = target;
-      events.push({ t: "teleport", player: player.id, pos: target });
+      // Walks there, and collects the salary if the nearest one is round past
+      // the Départ — which it never did before.
+      walkTo(events, player, target);
       const st = s.tiles[target] as TileState;
       if (st.owner === null) {
         s.buyTile = target;
@@ -632,6 +738,23 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     lastRoll: prev.lastRoll ? { ...prev.lastRoll } : null,
     log: [...prev.log],
     pendingAuctions: [...prev.pendingAuctions],
+    // `auction` is mutated field-by-field by `bid` and `auction-pass`, so a
+    // shared reference would write straight through into `prev`. `debt` and
+    // `card` are only ever reassigned wholesale today, but they are cloned
+    // too so the next edit cannot reintroduce the same bug.
+    auction: prev.auction ? { ...prev.auction, order: [...prev.auction.order] } : null,
+    debt: prev.debt ? { ...prev.debt } : null,
+    card: prev.card ? { ...prev.card } : null,
+    pendingTrade: prev.pendingTrade
+      ? {
+          ...prev.pendingTrade,
+          offer: {
+            ...prev.pendingTrade.offer,
+            giveProps: [...prev.pendingTrade.offer.giveProps],
+            takeProps: [...prev.pendingTrade.offer.takeProps],
+          },
+        }
+      : null,
   };
   const events: GameEvent[] = [];
   const player = s.players[s.current] as Player;
@@ -644,10 +767,12 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     }
     case "ack-card": {
       assertPhase(s, "card");
-      const cardId = (s.card as NonNullable<GameState["card"]>).cardId;
+      const pending = s.card as NonNullable<GameState["card"]>;
+      const { deck, cardId } = pending;
       s.card = null;
       s.phase = "resolving";
       applyCardEffect(s, events, cardId);
+      discardCard(s, deck, cardId);
       if (s.phase === "resolving") finishResolution(s, events);
       break;
     }
@@ -679,6 +804,11 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       const a = s.auction as NonNullable<GameState["auction"]>;
       const bidderId = a.order[0] as number;
       const bidder = s.players[bidderId] as Player;
+      // Checked before the comparisons below: NaN fails every `>` and `<=`
+      // test, so it would otherwise sail past both guards into `highBid`.
+      if (!Number.isInteger(action.amount) || action.amount <= 0) {
+        throw new Error("Enchère invalide");
+      }
       if (action.amount > bidder.money) throw new Error("Fonds insuffisants");
       if (action.amount <= a.highBid) throw new Error("Enchère trop basse");
       a.highBid = action.amount;
@@ -716,21 +846,25 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
     }
     case "build": {
       assertManageable(s);
+      assertBoardPos(action.pos);
       buildHouse(s, events, player, action.pos);
       break;
     }
     case "sell-house": {
-      assertManageable(s);
+      assertRaiseFunds(s);
+      assertBoardPos(action.pos);
       sellHouse(s, events, player, action.pos);
       break;
     }
     case "mortgage": {
-      assertManageable(s);
+      assertRaiseFunds(s);
+      assertBoardPos(action.pos);
       mortgageTile(s, events, player, action.pos);
       break;
     }
     case "unmortgage": {
       assertManageable(s);
+      assertBoardPos(action.pos);
       unmortgageTile(s, events, player, action.pos);
       break;
     }
@@ -794,30 +928,65 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       endTurn(s, events);
       break;
     }
-    case "propose-trade": {
-      assertPhase(s, "post-roll");
+    case "offer-trade": {
+      // The HUD has always offered trading before the roll as well as after;
+      // the engine only accepted `post-roll`, so every such offer was built
+      // and then thrown away with a red toast. Both are legal.
+      if (s.phase !== "turn-start" && s.phase !== "post-roll") {
+        throw new Error("Échange impossible maintenant");
+      }
+      if (s.pendingTrade) throw new Error("Une offre attend déjà une réponse");
       const offer = action.offer;
+      // Checked here so an impossible offer is refused at once rather than
+      // sitting on the table until somebody tries to accept it.
       validateTrade(s, player, offer);
       const target = s.players[offer.to] as Player;
-      if (offer.giveMoney > 0) {
-        player.money -= offer.giveMoney;
-        target.money += offer.giveMoney;
-        events.push({ t: "money", player: target.id, amount: offer.giveMoney });
-      }
-      if (offer.takeMoney > 0) {
-        target.money -= offer.takeMoney;
-        player.money += offer.takeMoney;
-        events.push({ t: "money", player: player.id, amount: offer.takeMoney });
-      }
-      for (const pos of offer.giveProps) {
-        (s.tiles[pos] as TileState).owner = offer.to;
-        events.push({ t: "transfer", from: player.id, to: offer.to, pos });
-      }
-      for (const pos of offer.takeProps) {
-        (s.tiles[pos] as TileState).owner = player.id;
-        events.push({ t: "transfer", from: offer.to, to: player.id, pos });
-      }
-      addLog(s, `Échange entre ${player.name} et ${target.name} accepté`);
+      s.pendingTrade = { from: player.id, offer };
+      events.push({ t: "sound", name: "card" });
+      events.push({
+        t: "toast",
+        text: `${player.name} propose un échange à ${target.name}`,
+        tone: "info",
+      });
+      break;
+    }
+    case "accept-trade": {
+      const pending = s.pendingTrade;
+      if (!pending) throw new Error("Aucune offre sur la table");
+      const from = s.players[pending.from] as Player;
+      const target = s.players[pending.offer.to] as Player;
+      // Checked a second time: the board has been free to move since the
+      // offer was made, and an offer that was fair then may not be now.
+      validateTrade(s, from, pending.offer);
+      s.pendingTrade = null;
+      settleTrade(s, events, from, pending.offer);
+      events.push({ t: "sound", name: "coin" });
+      events.push({
+        t: "toast",
+        text: `${target.name} accepte l'échange avec ${from.name}`,
+        tone: "good",
+      });
+      break;
+    }
+    case "reject-trade": {
+      const pending = s.pendingTrade;
+      if (!pending) throw new Error("Aucune offre sur la table");
+      const from = s.players[pending.from] as Player;
+      const target = s.players[pending.offer.to] as Player;
+      s.pendingTrade = null;
+          events.push({
+        t: "toast",
+        text: `${target.name} refuse l'échange de ${from.name}`,
+        tone: "bad",
+      });
+      break;
+    }
+    case "withdraw-trade": {
+      const pending = s.pendingTrade;
+      if (!pending) throw new Error("Aucune offre sur la table");
+      const from = s.players[pending.from] as Player;
+      s.pendingTrade = null;
+          events.push({ t: "toast", text: `${from.name} retire son offre`, tone: "info" });
       break;
     }
     default:

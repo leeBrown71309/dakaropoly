@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
+import { onlineAvailable } from "../../net/supabase";
 import { useCompact } from "../useViewport";
 import { PAWN_SHAPES, PLAYER_COLORS } from "../../game/data/pawns";
 import { Card, BrassRule } from "../kit/Surface";
@@ -9,6 +10,7 @@ import { PawnGlyph } from "../icons/PawnGlyph";
 /** Title screen, set like a printed travel poster for the city. */
 export function Home() {
   const openSetup = useGame((s) => s.openSetup);
+  const openOnline = useGame((s) => s.openOnline);
   const compact = useCompact();
 
   return (
@@ -60,18 +62,36 @@ export function Home() {
                 }`}
               >
                 Achetez la Médina, bâtissez les Almadies, et priez de ne jamais voir Rebeuss.
-                Deux à huit joueurs, un seul écran.
+                Deux à huit joueurs, sur un écran ou chacun le sien.
               </p>
 
-              <Button
-                face="gold"
-                size={compact ? "md" : "lg"}
-                icon="dice"
-                className={compact ? "mt-4" : "mt-7"}
-                onClick={openSetup}
-              >
-                Nouvelle partie
-              </Button>
+              <div className={`flex flex-col items-stretch gap-1.5 ${compact ? "mt-4" : "mt-7"}`}>
+                <Button face="gold" size={compact ? "md" : "lg"} icon="dice" onClick={openSetup}>
+                  Partie locale
+                </Button>
+                {onlineAvailable && (
+                  <div className="flex gap-1.5">
+                    <Button
+                      face="teal"
+                      size={compact ? "sm" : "md"}
+                      icon="exchange"
+                      block
+                      onClick={() => openOnline("create")}
+                    >
+                      Créer en ligne
+                    </Button>
+                    <Button
+                      face="bone"
+                      size={compact ? "sm" : "md"}
+                      icon="key"
+                      block
+                      onClick={() => openOnline("join")}
+                    >
+                      Rejoindre
+                    </Button>
+                  </div>
+                )}
+              </div>
 
               {/* The eight tokens, printed along the foot of the poster */}
               <div
@@ -89,11 +109,18 @@ export function Home() {
           </Card>
         </motion.div>
 
-        {!compact && (
-          <p className="absolute bottom-5 text-[11.5px] text-sand-300/60">
-            Fait maison, pour les soirées en famille.
-          </p>
-        )}
+        {/*
+          * Shown at every size now that it carries a name: a credit only the
+          * desktop sees is half a credit, and most of this gets played on a
+          * phone.
+          */}
+        <p
+          className={`absolute text-center text-sand-300/60 ${
+            compact ? "bottom-1 text-[10px]" : "bottom-5 text-[11.5px]"
+          }`}
+        >
+          Fait maison, pour les soirées en famille. Créé par Leeeight.
+        </p>
       </div>
     </div>
   );

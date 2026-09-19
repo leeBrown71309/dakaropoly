@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
+import { useIsMyTurn, useMySeat } from "../useTurn";
 import { BOARD, GROUP_MEMBERS, GROUP_ORDER } from "../../game/data/board";
 import { GROUP_COLORS, GROUP_NAMES, GROUP_ON_COLOR } from "../../game/colors";
 import {
@@ -25,10 +26,11 @@ export function ManagePanel() {
   const manageOpen = useGame((s) => s.manageOpen);
   const toggleManage = useGame((s) => s.toggleManage);
   const compact = useCompact();
+  const mySeat = useMySeat();
   const [viewedId, setViewedId] = useState<number | null>(null);
 
   if (!game) return null;
-  const player: Player | undefined = game.players[viewedId ?? game.current];
+  const player: Player | undefined = game.players[viewedId ?? mySeat ?? game.current];
   if (!player) return null;
 
   const ownedGroups = GROUP_ORDER.map((group) => ({
@@ -157,6 +159,8 @@ export function ManagePanel() {
 function PropertyRow({ pos, player, group }: { pos: number; player: Player; group?: ColorGroup }) {
   const game = useGame((s) => s.game);
   const dispatch = useGame((s) => s.dispatch);
+  const mySeat = useMySeat();
+  const canAct = useIsMyTurn();
   if (!game) return null;
   const tile = BOARD[pos];
   const state = game.tiles[pos];
@@ -166,7 +170,7 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
   const sellBlock = canSellHouseOn(game, player, pos);
   const mortgageBlock = canMortgage(game, player, pos);
   const unmortgageBlock = canUnmortgage(game, player, pos);
-  const isOwnTurn = game.current === player.id;
+  const isMine = mySeat === player.id;
 
   return (
     <div
@@ -195,7 +199,7 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
         </span>
       </div>
 
-      {isOwnTurn && (
+      {isMine && canAct && (
         <div className="mt-1 flex flex-wrap gap-1">
           {tile.kind === "street" && (
             <>
