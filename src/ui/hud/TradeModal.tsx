@@ -9,6 +9,7 @@ import { ownedPositions } from "../../game/selectors";
 import type { Player } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
+import { Tooltip } from "../kit/Tooltip";
 import { Money } from "../kit/Money";
 import { Icon } from "../icons/Icon";
 import { PlayerMark } from "../icons/PlayerMark";
@@ -282,15 +283,24 @@ export function TradeModal() {
                     <Button face="bone" size="sm" icon="arrowLeft" onClick={() => setTo(null)}>
                       {compact ? "Partenaire" : "Changer de partenaire"}
                     </Button>
-                    <Button
-                      face="gold"
-                      size={compact ? "sm" : "md"}
+                    <Tooltip
                       className="ml-auto"
-                      disabled={nothingOffered}
-                      onClick={() => setAwaiting(true)}
+                      title={nothingOffered ? "Offre vide" : "Proposer"}
+                      detail={
+                        nothingOffered
+                          ? "Posez au moins une propriété ou une somme d'un côté de la table."
+                          : "Rien ne bouge tant que l'autre joueur n'a pas accepté depuis son propre écran, et l'offre expire avec votre tour."
+                      }
                     >
-                      Proposer
-                    </Button>
+                      <Button
+                        face="gold"
+                        size={compact ? "sm" : "md"}
+                        disabled={nothingOffered}
+                        onClick={() => setAwaiting(true)}
+                      >
+                        Proposer
+                      </Button>
+                    </Tooltip>
                   </div>
                 </>
               )}

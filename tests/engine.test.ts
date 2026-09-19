@@ -276,7 +276,10 @@ describe("moteur Dakaropoly", () => {
     expect(p(res.state, 0).bankrupt).toBe(true);
     expect(res.state.phase).toBe("auction");
     expect(res.state.tiles[1]?.owner).toBeNull();
-    expect(res.state.pendingAuctions).toContain(1);
+    // Tile 1 is on the block right now; requeueing it made every estate
+    // come up for auction twice.
+    expect(res.state.auction?.pos).toBe(1);
+    expect(res.state.pendingAuctions).not.toContain(1);
   });
 
   it("victoire quand il ne reste qu'un joueur", () => {

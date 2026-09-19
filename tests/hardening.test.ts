@@ -242,8 +242,10 @@ describe("trades need both sides", () => {
   it("lets the offer lapse with the turn rather than outlive it", () => {
     // Accepting it during somebody else's turn would settle it against a
     // board that has moved on since.
-    let s = applyAction(offered(), { t: "roll", forced: { a: 1, b: 2 } }).state;
-    s = { ...s, phase: "post-roll", buyTile: null, auction: null, debt: null, card: null };
+    // The turn used to be advanced with a roll, which is now refused while an
+    // offer waits; the phase was overwritten straight afterwards anyway, so
+    // setting it is what the test always meant.
+    const s: GameState = { ...offered(), phase: "post-roll" };
     const ended = applyAction(s, { t: "end-turn" }).state;
     expect(ended.pendingTrade).toBeNull();
     expect(ended.tiles[1]?.owner).toBe(0);
@@ -263,6 +265,70 @@ describe("trades need both sides", () => {
   it("refuses an answer when nothing is on the table", () => {
     expect(() => applyAction(makeGame(), { t: "accept-trade" })).toThrow();
     expect(() => applyAction(makeGame(), { t: "reject-trade" })).toThrow();
+  });
+});
+
+describe("jail fine paid through a debt", () => {
+  it("resolves the walk that follows the payment", () => {
+    // Three failed attempts forced the 50 F fine through the debt phase,
+    // whose "release-move" then walked the player. The walk left the phase
+    // at "debt" with no debt: any payable rent on the landing square wedged
+    // the game for good.
+    let s = makeGame();
+    s = own(s, 13, 1); // Hann-Maristes, rent 10 F bare
+    s = own(s, 1, 0); // Pikine, mortgaged by J0 to raise the fine
+    s = {
+      ...s,
+      players: s.players.map((p, i) =>
+        i === 0 ? { ...p, position: 10, inJail: true, jailAttempts: 2, money: 40 } : p,
+      ),
+    };
+
+    s = applyAction(s, roll(1, 2)).state; // third failure, cannot pay
+    expect(s.phase).toBe("debt");
+    expect(s.debt?.after).toBe("release-move");
+
+    s = applyAction(s, { t: "mortgage", pos: 1 }).state; // 40 + 30 = 70
+    s = applyAction(s, { t: "pay-debt" }).state; // 70 − 50, then walk to 13
+
+    expect(s.debt).toBeNull();
+    expect(s.phase).toBe("post-roll");
+    expect(s.players[0]?.money).toBe(10); // 20 − 10 F rent
+    expect(s.players[1]?.money).toBe(1510);
+  });
+});
+
+describe("bankruptcy to the bank", () => {
+  it("auctions each holding exactly once, then hands the turn over", () => {
+    // The debtor's tiles are auctioned by the bank at their moment of
+    // bankruptcy; the first was in the queue *and* started at once, so every
+    // estate sold twice. When the last hammer fell, the turn stayed with the
+    // bankrupt player — an actor no legal action could ever move on.
+    let s = makeGame(3);
+    s = own(s, 1, 0);
+    s = own(s, 3, 0);
+    s = {
+      ...s,
+      phase: "debt",
+      debt: { amount: 999, creditor: null, distribute: false, after: "continue", moveSteps: 0 },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, money: 0 } : p)),
+    };
+
+    s = applyAction(s, { t: "declare-bankruptcy" }).state;
+    expect(s.phase).toBe("auction");
+    expect(s.auction?.pos).toBe(1);
+    expect(s.players[0]?.bankrupt).toBe(true);
+
+    s = applyAction(s, { t: "auction-pass" }).state;
+    s = applyAction(s, { t: "auction-pass" }).state;
+    expect(s.phase).toBe("auction");
+    expect(s.auction?.pos).toBe(3);
+
+    s = applyAction(s, { t: "auction-pass" }).state;
+    s = applyAction(s, { t: "auction-pass" }).state;
+    expect(s.phase).toBe("turn-start");
+    expect(s.current).toBe(1);
+    expect(s.winner).toBeNull();
   });
 });
 
@@ -320,5 +386,155 @@ describe("cards that send a player somewhere", () => {
 
     expect(events.some((e) => e.t === "move-steps")).toBe(true);
     expect(state.players[0]?.money).toBe(before + 200);
+  });
+});
+
+describe("buildings go back on the bank's shelf", () => {
+  /** Hands a group to one player and builds `each` buildings on every tile. */
+  function built(playerCount: number, group: number[], each: number): GameState {
+    let s = makeGame(playerCount);
+    for (const pos of group) s = own(s, pos, 0);
+    for (let n = 0; n < each; n++) {
+      for (const pos of group) s = applyAction(s, { t: "build", pos }).state;
+    }
+    return s;
+  }
+
+  /** Puts the current player in an unpayable debt, ready to give up. */
+  function ruined(s: GameState, creditor: number | null): GameState {
+    return {
+      ...s,
+      phase: "debt",
+      debt: { amount: 99_999, creditor, distribute: false, after: "continue", moveSteps: 0 },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, money: 0 } : p)),
+    };
+  }
+
+  it("returns houses to the bank when an estate is auctioned off", () => {
+    // Pikine and Guediawaye, three houses each: six off the shelf.
+    let s = built(3, [1, 3], 3);
+    expect(s.houseStock).toBe(26);
+
+    s = applyAction(ruined(s, null), { t: "declare-bankruptcy" }).state;
+
+    expect(s.tiles[1]?.houses).toBe(0);
+    expect(s.tiles[3]?.houses).toBe(0);
+    // The board is bare, so the bank holds all of them again. It used to
+    // hold 26 for ever, and the six it had lost stood nowhere at all.
+    expect(s.houseStock).toBe(32);
+    expect(s.hotelStock).toBe(12);
+  });
+
+  it("returns hotels when the estate passes to another player", () => {
+    // A hotel gave its four houses back when it was built, so only the
+    // hotel itself comes home.
+    let s = built(2, [1, 3], 5);
+    expect(s.hotelStock).toBe(10);
+    expect(s.houseStock).toBe(32);
+
+    s = applyAction(ruined(s, 1), { t: "declare-bankruptcy" }).state;
+
+    expect(s.hotelStock).toBe(12);
+    expect(s.houseStock).toBe(32);
+  });
+
+  it("does not trap an owner of hotels who could have sold one", () => {
+    // Two hotels, a 300 F debt, nothing in hand. Selling is the way out —
+    // it was refused because the bank believed it had no houses to give
+    // back, having lost them to earlier bankruptcies that never restocked.
+    let s = built(2, [1, 3], 5);
+    s = {
+      ...s,
+      phase: "debt",
+      debt: { amount: 300, creditor: 1, distribute: false, after: "continue", moveSteps: 0 },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, money: 0 } : p)),
+    };
+
+    s = applyAction(s, { t: "sell-house", pos: 1 }).state;
+    s = applyAction(s, { t: "sell-house", pos: 3 }).state;
+
+    expect(s.players[0]?.money).toBe(250); // 125 F per hotel on a 50 F street
+    expect(s.hotelStock).toBe(12);
+  });
+});
+
+describe("an eliminated player has left the table", () => {
+  it("is no longer in jail", () => {
+    let s = makeGame(3);
+    s = {
+      ...s,
+      phase: "debt",
+      debt: { amount: 99_999, creditor: 1, distribute: false, after: "continue", moveSteps: 0 },
+      players: s.players.map((p, i) =>
+        i === 0 ? { ...p, money: 0, position: 10, inJail: true, jailAttempts: 2 } : p,
+      ),
+    };
+
+    s = applyAction(s, { t: "declare-bankruptcy" }).state;
+
+    expect(s.players[0]?.bankrupt).toBe(true);
+    // The roster prints a jail mark from this flag alone, so a player who
+    // had left the game went on sitting in Rebeuss beside the living.
+    expect(s.players[0]?.inJail).toBe(false);
+    expect(s.players[0]?.jailAttempts).toBe(0);
+  });
+});
+
+describe("inherited mortgages cost something visible", () => {
+  it("announces the 10 % interest instead of taking it in silence", () => {
+    let s = makeGame(3);
+    s = { ...s, tiles: s.tiles.map((t, i) => (i === 39 ? { ...t, owner: 0, mortgaged: true } : t)) };
+    s = {
+      ...s,
+      phase: "debt",
+      debt: { amount: 99_999, creditor: 1, distribute: false, after: "continue", moveSteps: 0 },
+      players: s.players.map((p, i) => (i === 0 ? { ...p, money: 0 } : p)),
+    };
+
+    const { state, events } = applyAction(s, { t: "declare-bankruptcy" });
+
+    expect(state.players[1]?.money).toBe(1480); // 10 % of the 200 F mortgage
+    const fee = events.find((e) => e.t === "money" && e.player === 1 && e.amount === -20);
+    expect(fee).toBeDefined();
+    // Derived from the toast, so the journal carries it too.
+    expect(state.log.some((line) => line.includes("10 %"))).toBe(true);
+  });
+});
+
+describe("an offer is answered before the dice", () => {
+  /** J0 offers J1 most of its cash for Almadies, then tries to play on. */
+  function offered(): GameState {
+    let s = own(makeGame(3), 39, 1);
+    return applyAction(s, {
+      t: "offer-trade",
+      offer: { to: 1, giveMoney: 1450, giveProps: [], takeMoney: 0, takeProps: [39] },
+    }).state;
+  }
+
+  it("refuses to roll while an offer waits", () => {
+    expect(() => applyAction(offered(), roll(1, 2))).toThrow(/offre en cours/);
+  });
+
+  it("still lets the turn end, which lapses the offer", () => {
+    // Never a dead end: ending the turn clears the table, as it always did.
+    const s = applyAction({ ...offered(), phase: "post-roll" }, { t: "end-turn" }).state;
+    expect(s.pendingTrade).toBeNull();
+  });
+
+  it("keeps a bidder from being drained mid-auction", () => {
+    // The full sequence that ended with a high bidder at −1350 F: offer,
+    // roll, decline, bid to the hilt, and have the offer accepted while the
+    // auction is still running. It cannot start any more.
+    let s = offered();
+    expect(() => applyAction(s, roll(1, 2))).toThrow();
+
+    s = applyAction(s, { t: "accept-trade" }).state;
+    s = applyAction(s, roll(1, 2)).state; // Guediawaye, unowned
+    s = applyAction(s, { t: "decline" }).state;
+    s = applyAction(s, { t: "bid", amount: 50 }).state;
+    s = applyAction(s, { t: "auction-pass" }).state;
+    s = applyAction(s, { t: "auction-pass" }).state;
+
+    for (const p of s.players) expect(p.money).toBeGreaterThanOrEqual(0);
   });
 });

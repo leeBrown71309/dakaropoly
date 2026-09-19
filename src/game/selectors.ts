@@ -1,4 +1,4 @@
-import type { GameState, Player, TileState } from "./types";
+import { formatMoney, type GameState, type Player, type TileState } from "./types";
 import {
   BOARD,
   GROUP_MEMBERS,
@@ -7,6 +7,28 @@ import {
   UTILITY_POS,
   tileAt,
 } from "./data/board";
+import { GROUP_NAMES } from "./colors";
+
+/**
+ * Why a move is refused: the short verdict, and the rule behind it.
+ *
+ * The verdict alone is what the interface used to show. "Groupe incomplet"
+ * tells a player who already knows the rules what they had guessed, and a
+ * player who does not, nothing at all — so every refusal now carries a
+ * sentence saying what the rule is, and names the figures involved rather
+ * than leaving them to be worked out from the board.
+ */
+export interface Blocker {
+  title: string;
+  detail: string;
+}
+
+const refuse = (title: string, detail: string): Blocker => ({ title, detail });
+
+/** The one tile of a group whose buildings are the ones to touch next. */
+function nameOf(pos: number | undefined, fallback: string): string {
+  return pos === undefined ? fallback : tileAt(pos).name;
+}
 
 export function ownsGroup(s: GameState, playerId: number, group: keyof typeof GROUP_MEMBERS): boolean {
   return GROUP_MEMBERS[group].every((pos) => s.tiles[pos]?.owner === playerId);
@@ -33,53 +55,110 @@ export function rentFor(s: GameState, pos: number, diceSum: number, multiplier =
   return 0;
 }
 
-export function canBuildOn(s: GameState, player: Player, pos: number): string | null {
+export function canBuildOn(s: GameState, player: Player, pos: number): Blocker | null {
   const tile = tileAt(pos);
-  if (tile.kind !== "street" || !tile.group) return "Pas une rue";
+  if (tile.kind !== "street" || !tile.group) {
+    return refuse(
+      "Pas une rue",
+      "Seules les rues se construisent : les gares et les services publics n'accueillent ni maison ni hôtel.",
+    );
+  }
   const st = s.tiles[pos] as TileState | undefined;
-  if (!st) return "Introuvable";
-  if (st.owner !== player.id) return "Pas à vous";
+  if (!st) return refuse("Introuvable", "Cette case n'existe pas sur le plateau.");
+  if (st.owner !== player.id) return refuse("Pas à vous", "On ne bâtit que sur ses propres rues.");
   const members = GROUP_MEMBERS[tile.group];
-  if (!members.every((p) => s.tiles[p]?.owner === player.id)) return "Groupe incomplet";
-  if (members.some((p) => s.tiles[p]?.mortgaged)) return "Hypothèque dans le groupe";
-  if (st.houses >= 5) return "Hôtel déjà construit";
-  if (st.houses !== Math.min(...members.map((p) => s.tiles[p]?.houses ?? 0))) {
-    return "Construction uniforme requise";
+  const mine = members.filter((p) => s.tiles[p]?.owner === player.id).length;
+  if (mine < members.length) {
+    return refuse(
+      "Groupe incomplet",
+      `Bâtir demande la couleur entière : les ${members.length} rues ${GROUP_NAMES[tile.group].toLowerCase()}. Vous en avez ${mine}.`,
+    );
+  }
+  if (members.some((p) => s.tiles[p]?.mortgaged)) {
+    return refuse(
+      "Hypothèque dans le groupe",
+      "Une seule rue hypothéquée gèle toute la couleur. Levez l'hypothèque avant de bâtir.",
+    );
+  }
+  if (st.houses >= 5) {
+    return refuse("Hôtel déjà construit", "L'hôtel est le dernier échelon : cette rue ne peut plus monter.");
+  }
+  const lowest = Math.min(...members.map((p) => s.tiles[p]?.houses ?? 0));
+  if (st.houses !== lowest) {
+    const behind = members.find((p) => (s.tiles[p]?.houses ?? 0) === lowest);
+    return refuse(
+      "Construction uniforme requise",
+      `On bâtit à niveau égal dans une couleur : aucune rue ne prend plus d'une maison d'avance. Commencez par ${nameOf(behind, "la rue la moins construite")}.`,
+    );
   }
   if (st.houses === 4) {
-    if (s.hotelStock <= 0) return "Plus d'hôtels en banque";
+    if (s.hotelStock <= 0) {
+      return refuse(
+        "Plus d'hôtels en banque",
+        "Les 12 hôtels sont déjà sur le plateau. Il faudra qu'un joueur en revende un.",
+      );
+    }
   } else if (s.houseStock <= 0) {
-    return "Plus de maisons en banque";
+    return refuse(
+      "Plus de maisons en banque",
+      "Les 32 maisons sont déjà sur le plateau. Il faudra qu'un joueur en revende avant que vous puissiez bâtir.",
+    );
   }
-  if (player.money < (tile.houseCost ?? 0)) return "Fonds insuffisants";
+  const cost = tile.houseCost ?? 0;
+  if (player.money < cost) {
+    return refuse(
+      "Fonds insuffisants",
+      `Bâtir ici coûte ${formatMoney(cost)} ; il vous manque ${formatMoney(cost - player.money)}.`,
+    );
+  }
   return null;
 }
 
-export function canSellHouseOn(s: GameState, player: Player, pos: number): string | null {
+export function canSellHouseOn(s: GameState, player: Player, pos: number): Blocker | null {
   const tile = tileAt(pos);
-  if (tile.kind !== "street" || !tile.group) return "Pas une rue";
+  if (tile.kind !== "street" || !tile.group) {
+    return refuse("Pas une rue", "Seules les rues portent des bâtiments.");
+  }
   const st = s.tiles[pos] as TileState | undefined;
-  if (!st) return "Introuvable";
-  if (st.owner !== player.id) return "Pas à vous";
-  if (st.houses <= 0) return "Aucun bâtiment";
+  if (!st) return refuse("Introuvable", "Cette case n'existe pas sur le plateau.");
+  if (st.owner !== player.id) return refuse("Pas à vous", "On ne revend que ses propres bâtiments.");
+  if (st.houses <= 0) return refuse("Aucun bâtiment", "Il n'y a rien à revendre sur cette rue.");
   const members = GROUP_MEMBERS[tile.group];
-  if (st.houses !== Math.max(...members.map((p) => s.tiles[p]?.houses ?? 0))) {
-    return "Vente uniforme requise";
+  const highest = Math.max(...members.map((p) => s.tiles[p]?.houses ?? 0));
+  if (st.houses !== highest) {
+    const ahead = members.find((p) => (s.tiles[p]?.houses ?? 0) === highest);
+    return refuse(
+      "Vente uniforme requise",
+      `On revend à niveau égal, comme on bâtit : commencez par ${nameOf(ahead, "la rue la plus construite")}.`,
+    );
   }
-  if (st.houses === 5 && s.houseStock < 4) return "Banque sans maisons";
+  if (st.houses === 5 && s.houseStock < 4) {
+    return refuse(
+      "Banque sans maisons",
+      `Un hôtel se reprend contre les 4 maisons qu'il remplace, et la banque n'en a que ${s.houseStock}.`,
+    );
+  }
   return null;
 }
 
-export function canMortgage(s: GameState, player: Player, pos: number): string | null {
+export function canMortgage(s: GameState, player: Player, pos: number): Blocker | null {
   const tile = tileAt(pos);
   const st = s.tiles[pos] as TileState | undefined;
-  if (!st) return "Introuvable";
-  if (st.owner !== player.id) return "Pas à vous";
-  if (st.mortgaged) return "Déjà hypothéquée";
+  if (!st) return refuse("Introuvable", "Cette case n'existe pas sur le plateau.");
+  if (st.owner !== player.id) return refuse("Pas à vous", "On n'hypothèque que ses propres biens.");
+  if (st.mortgaged) {
+    return refuse(
+      "Déjà hypothéquée",
+      "Ce bien est déjà gagé : il ne rapporte plus rien tant que l'hypothèque n'est pas levée.",
+    );
+  }
   if (tile.group) {
     const members = GROUP_MEMBERS[tile.group];
     if (members.some((p) => (s.tiles[p]?.houses ?? 0) > 0)) {
-      return "Vendez d'abord les bâtiments du groupe";
+      return refuse(
+        "Bâtiments sur la couleur",
+        `Une couleur ne s'hypothèque pas tant qu'elle porte des bâtiments. Revendez d'abord ceux de la couleur ${GROUP_NAMES[tile.group].toLowerCase()}.`,
+      );
     }
   }
   return null;
@@ -90,12 +169,18 @@ export function unmortgageCost(pos: number): number {
   return Math.ceil(((tile.price ?? 0) / 2) * 1.1);
 }
 
-export function canUnmortgage(s: GameState, player: Player, pos: number): string | null {
+export function canUnmortgage(s: GameState, player: Player, pos: number): Blocker | null {
   const st = s.tiles[pos] as TileState | undefined;
-  if (!st) return "Introuvable";
-  if (st.owner !== player.id) return "Pas à vous";
-  if (!st.mortgaged) return "Pas hypothéquée";
-  if (player.money < unmortgageCost(pos)) return "Fonds insuffisants";
+  if (!st) return refuse("Introuvable", "Cette case n'existe pas sur le plateau.");
+  if (st.owner !== player.id) return refuse("Pas à vous", "On ne lève que ses propres hypothèques.");
+  if (!st.mortgaged) return refuse("Pas hypothéquée", "Ce bien n'est pas gagé : il rapporte déjà son loyer.");
+  const cost = unmortgageCost(pos);
+  if (player.money < cost) {
+    return refuse(
+      "Fonds insuffisants",
+      `Lever l'hypothèque coûte ${formatMoney(cost)} — la moitié du prix, plus 10 % d'intérêt. Il vous manque ${formatMoney(cost - player.money)}.`,
+    );
+  }
   return null;
 }
 

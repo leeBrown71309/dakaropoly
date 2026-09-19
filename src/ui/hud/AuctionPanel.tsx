@@ -3,8 +3,10 @@ import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn } from "../useTurn";
 import { decisionAnchor } from "./anchor";
+import { formatMoney } from "../../game/types";
 import { TitleDeed } from "../kit/TitleDeed";
 import { Button } from "../kit/Button";
+import { Tooltip } from "../kit/Tooltip";
 import { Money } from "../kit/Money";
 import { Label } from "../kit/Surface";
 import { Icon } from "../icons/Icon";
@@ -86,17 +88,27 @@ export function AuctionPanel() {
             {RAISES.map((step) => {
               const next = auction.highBid === 0 ? step : auction.highBid + step;
               return (
-                <Button
+                <Tooltip
                   key={step}
-                  face="gold"
-                  size="sm"
-                  disabled={next > bidder.money}
-                  onClick={() => dispatch({ t: "bid", amount: next })}
-                  className={`flex-col !gap-0.5 ${compact ? "py-1.5" : "py-2"}`}
+                  title={next > bidder.money ? "Au-dessus de vos moyens" : `Enchérir à ${formatMoney(next)}`}
+                  detail={
+                    next > bidder.money
+                      ? `Vous avez ${formatMoney(bidder.money)} en caisse. On n'enchérit pas à crédit : il faudrait vendre ou hypothéquer, ce qui ne se fait pas pendant une enchère.`
+                      : "La banque vend au plus offrant. Chacun mise à son tour, et l'enchère tombe quand tous les autres ont passé."
+                  }
                 >
-                  <span className="u-label opacity-70">+{step}</span>
-                  <Money amount={next} className={compact ? "text-[11px] font-bold" : "text-[12px] font-bold"} />
-                </Button>
+                  <Button
+                    face="gold"
+                    size="sm"
+                    block
+                    disabled={next > bidder.money}
+                    onClick={() => dispatch({ t: "bid", amount: next })}
+                    className={`flex-col !gap-0.5 ${compact ? "py-1.5" : "py-2"}`}
+                  >
+                    <span className="u-label opacity-70">+{step}</span>
+                    <Money amount={next} className={compact ? "text-[11px] font-bold" : "text-[12px] font-bold"} />
+                  </Button>
+                </Tooltip>
               );
             })}
           </div>

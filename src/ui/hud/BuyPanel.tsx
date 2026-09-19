@@ -3,10 +3,11 @@ import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useWaitingFor } from "../useTurn";
 import { BOARD } from "../../game/data/board";
-import type { TileDef } from "../../game/types";
+import { formatMoney, type TileDef } from "../../game/types";
 import { decisionAnchor } from "./anchor";
 import { TitleDeed } from "../kit/TitleDeed";
 import { Button } from "../kit/Button";
+import { Tooltip } from "../kit/Tooltip";
 import { Money } from "../kit/Money";
 import { Label } from "../kit/Surface";
 
@@ -55,16 +56,26 @@ export function BuyPanel() {
         </p>
       ) : (
         <div className="mt-1.5 flex gap-1.5">
-          <Button
-            face="teal"
-            size={compact ? "sm" : "md"}
-            icon="coins"
-            block
-            disabled={!affordable}
-            onClick={() => dispatch({ t: "buy" })}
+          <Tooltip
+            className="flex-1"
+            title={affordable ? "Acheter" : "Fonds insuffisants"}
+            detail={
+              affordable
+                ? `${formatMoney(price)} à la banque, et le titre est à vous. Refuser l'envoie aux enchères, où il partira peut-être moins cher — à quelqu'un d'autre.`
+                : `${tile?.name ?? "Ce bien"} coûte ${formatMoney(price)} ; il vous manque ${formatMoney(price - (player?.money ?? 0))}. Il partira donc aux enchères.`
+            }
           >
-            Acheter
-          </Button>
+            <Button
+              face="teal"
+              size={compact ? "sm" : "md"}
+              icon="coins"
+              block
+              disabled={!affordable}
+              onClick={() => dispatch({ t: "buy" })}
+            >
+              Acheter
+            </Button>
+          </Tooltip>
           <Button
             face="bone"
             size={compact ? "sm" : "md"}
