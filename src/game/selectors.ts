@@ -56,22 +56,51 @@ export function rentFor(s: GameState, pos: number, diceSum: number, multiplier =
 }
 
 /**
- * Which line of a title deed applies to a holder of this property.
+ * Which line of a title deed this property earns on, for whoever holds it.
  *
- * `pos` counts as theirs whether they hold it already or are only about to,
- * because that is the question the buy panel is really asking: unowned, the
- * property earns nothing, and what the player wants to know is what it will
- * earn once bought. Printing the first line regardless told a player already
- * holding two stations that they held one — the rent charged was always
- * right, but the card contradicted it.
+ * Only meaningful once it *is* held, which is the case the patrimoine panel
+ * shows. On a square nobody owns there is no such line.
  */
-export function rentRow(s: GameState, pos: number, ownerId: number): number {
+export function rentRow(s: GameState, pos: number): number | undefined {
   const tile = tileAt(pos);
+  const owner = s.tiles[pos]?.owner;
+  if (owner === undefined || owner === null) return undefined;
   if (tile.kind === "street") return s.tiles[pos]?.houses ?? 0;
-  const family = tile.kind === "station" ? STATION_POS : UTILITY_POS;
-  const held = family.filter((p) => p === pos || s.tiles[p]?.owner === ownerId).length;
-  if (tile.kind === "station") return Math.max(held, 1) - 1;
-  return held >= 2 ? 1 : 0;
+  if (tile.kind === "station") {
+    return STATION_POS.filter((p) => s.tiles[p]?.owner === owner).length - 1;
+  }
+  if (tile.kind === "utility") {
+    return UTILITY_POS.filter((p) => s.tiles[p]?.owner === owner).length === 2 ? 1 : 0;
+  }
+  return undefined;
+}
+
+/**
+ * Which line a player already stands on, before buying anything.
+ *
+ * Every line of the register is a claim about a number held — "2 gares
+ * possédées" — so marking one is saying you hold that many. On a square
+ * nobody owns, the line the purchase *would* reach is a claim about a
+ * purchase not yet made, and marking it says you already own a station you
+ * are still deciding whether to buy. What is true, and is the thing worth
+ * knowing before paying, is where you stand now: the line below it is what
+ * this square would move you to.
+ *
+ * A player holding none of the family stands on no line at all, and a street
+ * has no family to stand in — both get nothing marked, because there is
+ * nothing true to mark.
+ */
+export function holdingRow(s: GameState, pos: number, playerId: number): number | undefined {
+  const tile = tileAt(pos);
+  if (tile.kind === "station") {
+    const held = STATION_POS.filter((p) => s.tiles[p]?.owner === playerId).length;
+    return held > 0 ? held - 1 : undefined;
+  }
+  if (tile.kind === "utility") {
+    const held = UTILITY_POS.filter((p) => s.tiles[p]?.owner === playerId).length;
+    return held > 0 ? held - 1 : undefined;
+  }
+  return undefined;
 }
 
 export function canBuildOn(s: GameState, player: Player, pos: number): Blocker | null {
