@@ -226,7 +226,7 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
             transition={{ duration: 0.18, ease: "easeOut" }}
             className="overflow-hidden"
           >
-            <TitleDeed pos={pos} activeRow={rentRow(game, pos, player.id)} dense className="mt-1.5" />
+            <TitleDeed pos={pos} activeRow={rentRow(game, pos)} dense className="mt-1.5" />
           </motion.div>
         )}
       </AnimatePresence>

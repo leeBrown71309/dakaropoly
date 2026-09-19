@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyAction, createGame } from "../src/game/engine";
-import { rentFor, rentRow } from "../src/game/selectors";
+import { holdingRow, rentFor, rentRow } from "../src/game/selectors";
 import { STATION_POS, tileAt } from "../src/game/data/board";
 import type { GameState } from "../src/game/types";
 
@@ -542,36 +542,45 @@ describe("an offer is answered before the dice", () => {
 });
 
 describe("the line a title deed picks out", () => {
-  it("counts the station about to be bought, not the ones already held", () => {
-    // Two gares in hand, standing on a third. The card used to print the
-    // first line whatever the board said, so a player holding two stations
-    // was told they held one — while the rent charged was right all along.
-    let s = own(own(makeGame(), 5, 0), 15, 0);
+  it("marks where the buyer stands, never where the purchase would land", () => {
+    // Two gares in hand, standing on a third that nobody owns. Every line of
+    // the register claims a number held, so marking "3 gares possedees"
+    // would say they already hold a station they have not bought.
+    const s = own(own(makeGame(), 5, 0), 15, 0);
 
-    expect(rentRow(s, 25, 0)).toBe(2); // buying it makes three
-    expect(rentFor(s, 25, 7)).toBe(0); // unowned, so nothing is charged yet
+    expect(holdingRow(s, 25, 0)).toBe(1); // "2 gares possedees" — which is true
+    expect(rentFor(s, 25, 7)).toBe(0); // unowned, so nothing is charged
+  });
 
-    s = own(s, 25, 0);
-    expect(rentRow(s, 25, 0)).toBe(2); // already theirs: the same line
-    expect(rentFor(s, 25, 7)).toBe(100); // and that line is the rent charged
+  it("marks nothing at all for a buyer who holds none of the family", () => {
+    const s = makeGame();
+    expect(holdingRow(s, 25, 0)).toBeUndefined();
+    expect(holdingRow(s, 12, 0)).toBeUndefined();
+    // A street stands in no family: its rent is its own.
+    expect(holdingRow(s, 1, 0)).toBeUndefined();
   });
 
   it("does not count another player's stations", () => {
     const s = own(own(makeGame(), 5, 1), 15, 1);
-    expect(rentRow(s, 25, 0)).toBe(0); // J0 holds none; this would be their first
-    expect(rentRow(s, 25, 1)).toBe(2); // J1 holds two; this would be their third
+    expect(holdingRow(s, 25, 0)).toBeUndefined(); // J0 holds none
+    expect(holdingRow(s, 25, 1)).toBe(1); // J1 holds two
   });
 
-  it("reads the houses standing on a street", () => {
+  it("marks what an owned property earns, once it is owned", () => {
+    let s = own(own(makeGame(), 5, 0), 15, 0);
+    expect(rentRow(s, 5)).toBe(1); // two gares: the second line
+    expect(rentFor(s, 5, 7)).toBe(50); // and that is the rent charged
+
+    s = own(s, 25, 0);
+    expect(rentRow(s, 5)).toBe(2); // a third lifts all of them
+    expect(rentFor(s, 5, 7)).toBe(100);
+  });
+
+  it("reads the houses standing on a street, and nothing on an unowned one", () => {
     const s = makeGame();
     const built: GameState = { ...s, tiles: s.tiles.map((t, i) => (i === 1 ? { ...t, owner: 0, houses: 3 } : t)) };
-    expect(rentRow(built, 1, 0)).toBe(3);
-  });
-
-  it("counts the second utility the same way", () => {
-    const s = own(makeGame(), 12, 0);
-    expect(rentRow(s, 28, 0)).toBe(1); // buying SDE gives the pair
-    expect(rentRow(s, 28, 1)).toBe(0); // for anybody else it is a first
+    expect(rentRow(built, 1)).toBe(3);
+    expect(rentRow(s, 1)).toBeUndefined();
   });
 });
 

@@ -2,9 +2,33 @@ import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useWaitingFor } from "../useTurn";
-import { BOARD } from "../../game/data/board";
-import { rentRow } from "../../game/selectors";
-import { formatMoney, type TileDef } from "../../game/types";
+import { BOARD, STATION_POS, STATION_RENTS, UTILITY_POS } from "../../game/data/board";
+import { holdingRow } from "../../game/selectors";
+import { formatMoney, type GameState, type TileDef } from "../../game/types";
+
+/**
+ * What this purchase would change for the buyer, or nothing to say.
+ *
+ * The register answers "what does it earn at each level"; it does not answer
+ * "what does buying it do for me", which is the question in front of somebody
+ * holding two gares and looking at a third. Spelling it out also settles what
+ * the marked line means — it is where they stand, not where they would land.
+ */
+function purchaseGain(game: GameState, pos: number, playerId: number): string | null {
+  const tile = BOARD[pos];
+  if (tile?.kind === "station") {
+    const held = STATION_POS.filter((p) => game.tiles[p]?.owner === playerId).length;
+    if (held === 0) return null;
+    const next = STATION_RENTS[held] ?? 0;
+    return `Vous possédez ${held === 1 ? "1 gare" : `${held} gares`} : avec celle-ci, chacune rapporterait ${formatMoney(next)}.`;
+  }
+  if (tile?.kind === "utility") {
+    const held = UTILITY_POS.filter((p) => game.tiles[p]?.owner === playerId).length;
+    if (held !== 1) return null;
+    return "Vous possédez déjà l'autre service : les deux ensemble rapportent 10 × les dés.";
+  }
+  return null;
+}
 import { decisionAnchor } from "./anchor";
 import { TitleDeed } from "../kit/TitleDeed";
 import { Button } from "../kit/Button";
@@ -28,6 +52,10 @@ export function BuyPanel() {
   const price = tile?.price ?? 0;
   const player = game.players[game.current];
   const affordable = (player?.money ?? 0) >= price;
+  // What the purchase would actually change, said in words rather than left
+  // to be read off a table: buying a station lifts the rent on *all* of them,
+  // which is the whole reason to want a third.
+  const gain = purchaseGain(game, pos, game.current);
 
   return (
     <motion.div
@@ -36,10 +64,27 @@ export function BuyPanel() {
       transition={{ type: "spring", stiffness: 320, damping: 30 }}
       className={decisionAnchor(compact)}
     >
-      {/* The line this purchase would put the buyer on, not the first one.
-          A player holding two stations was being shown "1 gare possédée" on
-          the card for their third. */}
-      <TitleDeed pos={pos} activeRow={rentRow(game, pos, game.current)} dense={compact} />
+      {/* The line the buyer already stands on — nothing at all when they hold
+          none of the family. Every line claims a number held, so marking the
+          one this purchase would reach said they already owned a square they
+          are still deciding whether to buy. */}
+      <TitleDeed pos={pos} activeRow={holdingRow(game, pos, game.current)} dense={compact} />
+      {gain && (
+        // On the same stock as the price below it: loose text here sits
+        // straight on the board, where a lacquered green table is no
+        // background to read a sentence off.
+        <p
+          className={`mt-1.5 rounded-[3px] leading-snug text-ink-700 ${
+            compact ? "px-2.5 py-1 text-[10.5px]" : "px-3 py-1.5 text-[11.5px]"
+          }`}
+          style={{
+            background: "linear-gradient(180deg,#f7f0e1,#e6d9bf)",
+            boxShadow: "inset 0 0 0 1px rgba(110,86,52,.22)",
+          }}
+        >
+          {gain}
+        </p>
+      )}
 
       <div
         className={`mt-1.5 flex items-center justify-between rounded-[3px] ${
