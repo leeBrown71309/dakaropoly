@@ -5,8 +5,12 @@ import { useCompact } from "../useViewport";
 
 /** Clearance between the slip and the control it belongs to. */
 const GAP = 8;
-/** Kept off the glass edges, which on a phone are where the notch is. */
+/** Kept off the glass edges, on top of whatever the notch already takes. */
 const EDGE = 10;
+/** Headroom a slip needs above a control before it gives up and hangs below. */
+const ROOM = 120;
+/** How long a slip a finger opened stays before seeing itself out. */
+const TOUCH_DWELL = 4500;
 
 /**
  * Where the slip sits, as edges rather than an offset.
@@ -22,6 +26,27 @@ interface Placement {
   top?: number;
   bottom?: number;
   below: boolean;
+  /** Opened by a finger, so nothing will ever arrive to close it. */
+  byTouch: boolean;
+}
+
+/**
+ * The glass a slip may occupy: the viewport, less the notch.
+ *
+ * Held in landscape — the only way this board is playable — a phone puts its
+ * notch on one of the *sides*, which is exactly where the panels carrying
+ * these controls sit. The rest of the interface clears it through `.p-safe`;
+ * a slip is portalled to `body`, outside that wrapper, so it has to read the
+ * insets for itself.
+ */
+function safeBox(): { left: number; right: number; top: number } {
+  const root = getComputedStyle(document.documentElement);
+  const inset = (name: string) => parseFloat(root.getPropertyValue(name)) || 0;
+  return {
+    left: inset("--safe-l") + EDGE,
+    right: window.innerWidth - inset("--safe-r") - EDGE,
+    top: inset("--safe-t") + EDGE,
+  };
 }
 
 interface TooltipProps {
@@ -38,8 +63,7 @@ interface TooltipProps {
  *
  * It exists because the interface used to answer a refused move with two or
  * three words in a browser tooltip — "Groupe incomplet" — which is a verdict,
- * not a reason, and which a phone never shows at all. The slip carries both,
- * and opens on a tap as readily as on a hover.
+ * not a reason, and which a phone never shows at all.
  *
  * It is positioned against the viewport rather than the anchor's parent: the
  * controls that most need one sit inside a panel that scrolls, and a slip
@@ -56,24 +80,30 @@ export function Tooltip({ title, detail, children, className = "" }: TooltipProp
 
   const close = useCallback(() => setPlace(null), []);
 
-  const open = useCallback(() => {
-    const el = anchor.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const left = Math.min(
-      Math.max(rect.left + rect.width / 2 - width / 2, EDGE),
-      Math.max(EDGE, window.innerWidth - width - EDGE),
-    );
-    // Above by default — a slip under the thumb is a slip nobody reads. It
-    // flips below only when the control is already near the top of the glass.
-    const below = rect.top < 150;
-    setPlace({
-      left,
-      below,
-      top: below ? rect.bottom + GAP : undefined,
-      bottom: below ? undefined : window.innerHeight - rect.top + GAP,
-    });
-  }, [width]);
+  const open = useCallback(
+    (byTouch: boolean) => {
+      const el = anchor.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const box = safeBox();
+      const left = Math.min(
+        Math.max(rect.left + rect.width / 2 - width / 2, box.left),
+        Math.max(box.left, box.right - width),
+      );
+      // Above by default — a slip under the thumb is a slip nobody reads. It
+      // flips below only when there is genuinely no headroom, which on a
+      // phone in landscape is most of the top half of the glass.
+      const below = rect.top - box.top < ROOM;
+      setPlace({
+        left,
+        below,
+        byTouch,
+        top: below ? rect.bottom + GAP : undefined,
+        bottom: below ? undefined : window.innerHeight - rect.top + GAP,
+      });
+    },
+    [width],
+  );
 
   useEffect(() => {
     if (!place) return;
@@ -91,6 +121,15 @@ export function Tooltip({ title, detail, children, className = "" }: TooltipProp
     };
   }, [place, close]);
 
+  useEffect(() => {
+    // A finger leaves nothing behind it: there is no pointerleave coming, and
+    // waiting for a tap somewhere else would leave the slip sitting over the
+    // board for the rest of the turn.
+    if (!place?.byTouch) return;
+    const t = window.setTimeout(close, TOUCH_DWELL);
+    return () => window.clearTimeout(t);
+  }, [place, close]);
+
   return (
     <>
       <span
@@ -102,18 +141,23 @@ export function Tooltip({ title, detail, children, className = "" }: TooltipProp
         className={`tip-anchor ${className}`}
         aria-describedby={place ? id : undefined}
         onPointerEnter={(e) => {
-          if (e.pointerType !== "touch") open();
+          if (e.pointerType !== "touch") open(false);
         }}
         onPointerLeave={(e) => {
           if (e.pointerType !== "touch") close();
         }}
         onPointerDown={(e) => {
-          // A finger has no hover, so the slip is a toggle there instead.
           if (e.pointerType !== "touch") return;
+          // On a control that still works, the tap *is* the action, and a
+          // slip explaining it afterwards would hang over a board that has
+          // already moved on. A refused control takes no pointer events, so
+          // the tap lands on this wrapper instead — which is exactly the
+          // case worth a word.
+          if (e.target !== anchor.current) return;
           if (place) close();
-          else open();
+          else open(true);
         }}
-        onFocus={open}
+        onFocus={() => open(false)}
         onBlur={close}
       >
         {children}
