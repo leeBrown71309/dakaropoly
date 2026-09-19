@@ -55,6 +55,25 @@ export function rentFor(s: GameState, pos: number, diceSum: number, multiplier =
   return 0;
 }
 
+/**
+ * Which line of a title deed applies to a holder of this property.
+ *
+ * `pos` counts as theirs whether they hold it already or are only about to,
+ * because that is the question the buy panel is really asking: unowned, the
+ * property earns nothing, and what the player wants to know is what it will
+ * earn once bought. Printing the first line regardless told a player already
+ * holding two stations that they held one — the rent charged was always
+ * right, but the card contradicted it.
+ */
+export function rentRow(s: GameState, pos: number, ownerId: number): number {
+  const tile = tileAt(pos);
+  if (tile.kind === "street") return s.tiles[pos]?.houses ?? 0;
+  const family = tile.kind === "station" ? STATION_POS : UTILITY_POS;
+  const held = family.filter((p) => p === pos || s.tiles[p]?.owner === ownerId).length;
+  if (tile.kind === "station") return Math.max(held, 1) - 1;
+  return held >= 2 ? 1 : 0;
+}
+
 export function canBuildOn(s: GameState, player: Player, pos: number): Blocker | null {
   const tile = tileAt(pos);
   if (tile.kind !== "street" || !tile.group) {

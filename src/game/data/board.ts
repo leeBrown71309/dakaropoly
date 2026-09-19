@@ -36,7 +36,10 @@ export const BOARD: TileDef[] = [
   { kind: "street", pos: 32, name: "Baobab", group: "green", price: 300, houseCost: 200, rents: [26, 130, 390, 900, 1100, 1275] },
   { kind: "chest", pos: 33, name: "Teranga" },
   { kind: "street", pos: 34, name: "Fann Résidence", group: "green", price: 320, houseCost: 200, rents: [28, 150, 450, 1000, 1200, 1400] },
-  { kind: "station", pos: 35, name: "Station Almadies", price: 200 },
+  // "Gare des Almadies", not "Station Almadies": the other three are gares du
+  // TER, and the odd one out read as a different kind of thing on a board
+  // where the kind is the whole point.
+  { kind: "station", pos: 35, name: "Gare des Almadies", price: 200 },
   { kind: "chance", pos: 36, name: "Baraka !" },
   { kind: "street", pos: 37, name: "Ngor", group: "darkblue", price: 350, houseCost: 200, rents: [35, 175, 500, 1100, 1300, 1500] },
   { kind: "tax", pos: 38, name: "Taxe de luxe", taxAmount: 100 },
