@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useMySeat } from "../useTurn";
-import { BOARD, GROUP_MEMBERS, GROUP_ORDER } from "../../game/data/board";
+import { BOARD, GROUP_MEMBERS, GROUP_ORDER, STATION_POS, UTILITY_POS } from "../../game/data/board";
 import { GROUP_COLORS, GROUP_NAMES, GROUP_ON_COLOR } from "../../game/colors";
 import {
   canBuildOn,
@@ -15,10 +15,12 @@ import {
   ownedPositions,
   unmortgageCost,
 } from "../../game/selectors";
-import type { ColorGroup, Player } from "../../game/types";
+import { formatMoney, type ColorGroup, type GameState, type Player } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
+import { Tooltip } from "../kit/Tooltip";
+import { TitleDeed } from "../kit/TitleDeed";
 import { Icon } from "../icons/Icon";
 
 export function ManagePanel() {
@@ -156,11 +158,29 @@ export function ManagePanel() {
   );
 }
 
+/**
+ * Which line of the title deed is the rent this property earns right now.
+ *
+ * A register that prints six figures without saying which one is live leaves
+ * the reading to be done twice — once off the card, once off the board.
+ */
+function activeRentRow(game: GameState, pos: number): number {
+  const tile = BOARD[pos];
+  const state = game.tiles[pos];
+  if (!tile || !state) return 0;
+  if (tile.kind === "street") return state.houses;
+  if (tile.kind === "station") {
+    return Math.max(1, STATION_POS.filter((p) => game.tiles[p]?.owner === state.owner).length) - 1;
+  }
+  return UTILITY_POS.filter((p) => game.tiles[p]?.owner === state.owner).length === 2 ? 1 : 0;
+}
+
 function PropertyRow({ pos, player, group }: { pos: number; player: Player; group?: ColorGroup }) {
   const game = useGame((s) => s.game);
   const dispatch = useGame((s) => s.dispatch);
   const mySeat = useMySeat();
   const canAct = useIsMyTurn();
+  const [deedOpen, setDeedOpen] = useState(false);
   if (!game) return null;
   const tile = BOARD[pos];
   const state = game.tiles[pos];
@@ -171,6 +191,7 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
   const mortgageBlock = canMortgage(game, player, pos);
   const unmortgageBlock = canUnmortgage(game, player, pos);
   const isMine = mySeat === player.id;
+  const nextRent = tile.rents?.[state.houses + 1];
 
   return (
     <div
@@ -180,11 +201,21 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
         boxShadow: "inset 0 0 0 1px rgba(110,86,52,.18)",
       }}
     >
-      <div className="flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => setDeedOpen((open) => !open)}
+        aria-expanded={deedOpen}
+        className="flex w-full items-center gap-1.5 text-left"
+      >
         {group && (
           <span className="h-3.5 w-[3px] rounded-[1px]" style={{ backgroundColor: GROUP_COLORS[group] }} />
         )}
         <span className="truncate text-[12.5px] font-bold text-ink-900">{tile.name}</span>
+        <Icon
+          name="chevronDown"
+          size={12}
+          className={`shrink-0 text-ink-300 transition-transform ${deedOpen ? "rotate-180" : ""}`}
+        />
 
         <span className="ml-auto flex items-center gap-0.5">
           {state.mortgaged ? (
@@ -197,56 +228,103 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
             ))
           )}
         </span>
-      </div>
+      </button>
+
+      {/* The rent register, on demand. It is the same title deed the buy and
+          auction panels print, rather than a second copy of the same figures
+          left free to drift away from them. */}
+      <AnimatePresence initial={false}>
+        {deedOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="overflow-hidden"
+          >
+            <TitleDeed pos={pos} activeRow={activeRentRow(game, pos)} dense className="mt-1.5" />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {isMine && canAct && (
         <div className="mt-1 flex flex-wrap gap-1">
           {tile.kind === "street" && (
             <>
-              <Button
-                face="teal"
-                size="sm"
-                icon="hammer"
-                title={buildBlock ?? "Construire"}
-                disabled={buildBlock !== null}
-                onClick={() => dispatch({ t: "build", pos })}
+              <Tooltip
+                title={buildBlock?.title ?? "Construire"}
+                detail={
+                  buildBlock?.detail ??
+                  `Une maison de plus sur ${tile.name} pour ${formatMoney(tile.houseCost ?? 0)}${
+                    nextRent === undefined ? "" : `, et le loyer passe à ${formatMoney(nextRent)}`
+                  }.`
+                }
               >
-                <Money amount={tile.houseCost ?? 0} />
-              </Button>
-              <Button
-                face="bone"
-                size="sm"
-                icon="minus"
-                title={sellBlock ?? "Vendre un bâtiment"}
-                disabled={sellBlock !== null}
-                onClick={() => dispatch({ t: "sell-house", pos })}
+                <Button
+                  face="teal"
+                  size="sm"
+                  icon="hammer"
+                  disabled={buildBlock !== null}
+                  onClick={() => dispatch({ t: "build", pos })}
+                >
+                  <Money amount={tile.houseCost ?? 0} />
+                </Button>
+              </Tooltip>
+              <Tooltip
+                title={sellBlock?.title ?? "Vendre un bâtiment"}
+                detail={
+                  sellBlock?.detail ??
+                  `La banque reprend un bâtiment pour ${formatMoney(houseRefund(pos))}, la moitié de son prix.`
+                }
               >
-                <Money amount={houseRefund(pos)} signed />
-              </Button>
+                <Button
+                  face="bone"
+                  size="sm"
+                  icon="minus"
+                  disabled={sellBlock !== null}
+                  onClick={() => dispatch({ t: "sell-house", pos })}
+                >
+                  <Money amount={houseRefund(pos)} signed />
+                </Button>
+              </Tooltip>
             </>
           )}
           {!state.mortgaged ? (
-            <Button
-              face="slate"
-              size="sm"
-              icon="lock"
-              title={mortgageBlock ?? "Hypothéquer"}
-              disabled={mortgageBlock !== null}
-              onClick={() => dispatch({ t: "mortgage", pos })}
+            <Tooltip
+              title={mortgageBlock?.title ?? "Hypothéquer"}
+              detail={
+                mortgageBlock?.detail ??
+                `La banque avance ${formatMoney(mortgageValue(pos))}. Le bien ne rapporte plus de loyer tant que l'hypothèque court.`
+              }
             >
-              <Money amount={mortgageValue(pos)} signed />
-            </Button>
+              <Button
+                face="slate"
+                size="sm"
+                icon="lock"
+                disabled={mortgageBlock !== null}
+                onClick={() => dispatch({ t: "mortgage", pos })}
+              >
+                <Money amount={mortgageValue(pos)} signed />
+              </Button>
+            </Tooltip>
           ) : (
-            <Button
-              face="gold"
-              size="sm"
-              icon="key"
-              title={unmortgageBlock ?? "Lever l'hypothèque"}
-              disabled={unmortgageBlock !== null}
-              onClick={() => dispatch({ t: "unmortgage", pos })}
+            <Tooltip
+              title={unmortgageBlock?.title ?? "Lever l'hypothèque"}
+              detail={
+                unmortgageBlock?.detail ??
+                `Rembourser coûte ${formatMoney(unmortgageCost(pos))} — la moitié du prix, plus 10 % d'intérêt — et le loyer reprend.`
+              }
             >
-              <Money amount={-unmortgageCost(pos)} signed />
-            </Button>
+              <Button
+                face="gold"
+                size="sm"
+                icon="key"
+                disabled={unmortgageBlock !== null}
+                onClick={() => dispatch({ t: "unmortgage", pos })}
+              >
+                <Money amount={-unmortgageCost(pos)} signed />
+              </Button>
+            </Tooltip>
           )}
         </div>
       )}

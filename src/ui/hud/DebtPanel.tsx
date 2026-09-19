@@ -4,8 +4,10 @@ import { useCompact } from "../useViewport";
 import { useIsMyTurn, useWaitingFor } from "../useTurn";
 import { decisionAnchor } from "./anchor";
 import { netWorthOf } from "../../game/selectors";
+import { formatMoney } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
+import { Tooltip } from "../kit/Tooltip";
 import { Money } from "../kit/Money";
 import { Icon } from "../icons/Icon";
 
@@ -88,25 +90,45 @@ export function DebtPanel() {
         </p>
       ) : (
         <div className="mt-1.5 flex gap-1.5">
-          <Button
-            face="teal"
-            size={compact ? "sm" : "md"}
-            icon="coins"
-            block
-            disabled={!canPay}
-            onClick={() => dispatch({ t: "pay-debt" })}
+          <Tooltip
+            className="flex-1"
+            title={canPay ? "Régler" : "Fonds insuffisants"}
+            detail={
+              canPay
+                ? `${formatMoney(debt.amount)} quittent votre caisse et la partie reprend.`
+                : `Il manque ${formatMoney(debt.amount - player.money)}. Vendez des bâtiments ou hypothéquez depuis le patrimoine : tant qu'il reste de quoi payer, la faillite n'est pas obligatoire.`
+            }
           >
-            Régler
-          </Button>
-          <Button
-            face="clay"
-            size={compact ? "sm" : "md"}
-            icon="flag"
-            block
-            onClick={() => dispatch({ t: "declare-bankruptcy" })}
+            <Button
+              face="teal"
+              size={compact ? "sm" : "md"}
+              icon="coins"
+              block
+              disabled={!canPay}
+              onClick={() => dispatch({ t: "pay-debt" })}
+            >
+              Régler
+            </Button>
+          </Tooltip>
+          <Tooltip
+            className="flex-1"
+            title="Faillite"
+            detail={
+              creditor
+                ? `Vous quittez la partie et tout ce que vous possédez passe à ${creditor.name}, bâtiments revendus à la banque.`
+                : "Vous quittez la partie. Vos biens repartent aux enchères, une case après l'autre, et vos bâtiments retournent à la banque."
+            }
           >
-            Faillite
-          </Button>
+            <Button
+              face="clay"
+              size={compact ? "sm" : "md"}
+              icon="flag"
+              block
+              onClick={() => dispatch({ t: "declare-bankruptcy" })}
+            >
+              Faillite
+            </Button>
+          </Tooltip>
         </div>
       )}
 

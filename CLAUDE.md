@@ -55,7 +55,7 @@ Conventions inside the engine:
 - Illegal actions `throw new Error("<French message>")`. The store catches and surfaces them as a toast; the engine never fails silently and never returns an error state.
 - Randomness is **state-owned and deterministic**: `s.rng` is seeded in `createGame(defs, seed?)` and advanced by `nextRng`. Never call `Math.random()` inside the engine — it would break test reproducibility.
 - `{ t: "roll", forced: { a, b } }` exists **only for tests**. Do not expose it in the UI.
-- `selectors.ts` holds all rule *queries* (rent, buildability, mortgage value, net worth). `can*` functions return `null` when allowed or a French reason string when not — the HUD renders that string directly as the disabled reason. Keep new rule math there, not in components.
+- `selectors.ts` holds all rule *queries* (rent, buildability, mortgage value, net worth). `can*` functions return `null` when allowed or a `Blocker` — `{ title, detail }` — when not: the short verdict the control wears, and the rule behind it in one sentence, with the figures already filled in. "Groupe incomplet" is a verdict a player who knows the rules had already guessed, and one that tells a player who does not nothing at all, so the sentence is not optional. The HUD renders both in a `Tooltip`. Keep new rule math there, not in components.
 - Board and card data live in `src/game/data/` (`board.ts` = 40 tiles with official prices/rents, `cards.ts` = 16 "Baraka" + 16 "Teranga" cards as typed `CardEffect`s).
 
 ### 2. Store + animation queue — `src/game/store.ts`
@@ -87,7 +87,9 @@ Adding an event: extend `GameEvent` in `types.ts` **and** add a `case` in `handl
   both squares are now a field of colour rather than an icon on bare paper. A
   stripe along one edge would have been wrong: that is what a colour *group*
   looks like here, and these are not properties.
-- `src/ui/kit/` holds the shared primitives (`Button`, `Surface`, `Money`, `TitleDeed`); build new panels from these rather than restyling divs.
+- `src/ui/kit/` holds the shared primitives (`Button`, `Surface`, `Money`, `TitleDeed`, `Tooltip`); build new panels from these rather than restyling divs.
+- **`Tooltip` is how a control explains itself**, and it wraps the control rather than taking a prop, for three reasons that are easy to undo by accident. A disabled button swallows pointer events outright, so `.tip-anchor` takes them off the child — without it the one control that most needs explaining is the one that cannot be hovered. The slip is positioned against the viewport and portalled to `body`, because the panel it usually hangs off scrolls and a slip clipped by its own list is worse than none; anything that moves the anchor closes it. And it opens on a tap as readily as a hover, since a phone has no hover and the native `title` attribute shows there never.
+- **`TitleDeed` is the one rent register.** The buy panel, the auction and the patrimoine list all print it, with `activeRow` marking the rent the property earns right now. Do not lay out a second copy of those figures — there is exactly one place for them to drift from.
 - **Zero external assets** beyond the two self-hosted webfonts (`@fontsource-variable/*`): every board mark, deck face and die face is canvas-drawn, every sound is synthesized WebAudio in `src/audio/sounds.ts`. Do not add image or audio files.
 - Tailwind v4 via `@tailwindcss/vite` — no `tailwind.config`; tokens live in the `@theme` block of `src/index.css`.
 

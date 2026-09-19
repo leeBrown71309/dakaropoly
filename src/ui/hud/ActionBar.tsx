@@ -6,8 +6,10 @@ import { keepingFullscreen } from "../fullscreen";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useIsOnline, useIsSpectator, useWaitingFor } from "../useTurn";
 import { cameraRig } from "../../three/cameraRig";
+import { formatMoney } from "../../game/types";
 import { Rail, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
+import { Tooltip } from "../kit/Tooltip";
 import { Money } from "../kit/Money";
 import { PlayerMark } from "../icons/PlayerMark";
 import { ChatPanel } from "./ChatPanel";
@@ -78,6 +80,32 @@ export function ActionBar() {
 
   const busy = animating || game.phase === "resolving" || game.phase === "card";
   const blocked = busy || game.phase === "buy-decision" || game.phase === "auction" || game.phase === "debt";
+  // The dice wait for an answer, as the engine now insists. Ending the turn
+  // still lapses the offer, so this is never a dead end — and the offer's own
+  // pane is on screen for both sides, which is where the reason is written.
+  const offerWaiting = Boolean(game.pendingTrade);
+  // Why the rail is not offering its usual action. A greyed button with no
+  // reason is the thing players ask about first.
+  const railBlock = offerWaiting
+    ? {
+        title: "Offre en attente",
+        detail:
+          "Un échange est sur la table. Il se répond avant que les dés repartent : accepté plus tard, il porterait sur un plateau qui a déjà bougé.",
+      }
+    : animating
+      ? {
+          title: "Le plateau rattrape",
+          detail: "Les règles ont déjà avancé. La barre attend que les pions et les cartes finissent de jouer.",
+        }
+      : game.phase === "card"
+        ? { title: "Carte en cours", detail: "La carte tirée bloque le tour jusqu'à ce qu'elle soit acquittée." }
+        : game.phase === "buy-decision"
+          ? { title: "Décision d'achat", detail: "Achetez le titre ou envoyez-le aux enchères avant de continuer." }
+          : game.phase === "auction"
+            ? { title: "Enchères en cours", detail: "La vente se termine avant que le tour reprenne." }
+            : game.phase === "debt"
+              ? { title: "Dette à régler", detail: "Rien d'autre n'est possible tant que la somme due n'est pas payée ou la faillite déclarée." }
+              : null;
   // While the queue is playing the rules have already moved on, but the board
   // has not — so the rail waits too rather than offering the next action.
   const waitingFor = waitingForName
@@ -165,54 +193,98 @@ export function ActionBar() {
             waiting
           ) : game.phase === "turn-start" && player.inJail ? (
             <>
+              <Tooltip
+                title={railBlock?.title ?? "Tenter un double"}
+                detail={
+                  railBlock?.detail ??
+                  "Un double vous fait sortir et vous avancez d'autant. Au troisième échec, vous payez 50 F et sortez quand même."
+                }
+              >
+                <Button
+                  face="gold"
+                  size={primarySize}
+                  icon="dice"
+                  disabled={blocked || offerWaiting}
+                  onClick={() => dispatch({ t: "roll" })}
+                >
+                  {compact ? "Double" : "Tenter un double"}
+                </Button>
+              </Tooltip>
+              <Tooltip
+                title={railBlock?.title ?? (player.money < 50 ? "Fonds insuffisants" : "Payer la caution")}
+                detail={
+                  railBlock?.detail ??
+                  (player.money < 50
+                    ? `La caution est de 50 F et vous n'avez que ${formatMoney(player.money)}.`
+                    : "50 F à la banque et vous sortez immédiatement, puis vous lancez les dés normalement.")
+                }
+              >
+                <Button
+                  face="teal"
+                  size={secondarySize}
+                  icon="coins"
+                  disabled={blocked || player.money < 50}
+                  onClick={() => dispatch({ t: "pay-fine" })}
+                >
+                  {compact ? "50 F" : "Payer 50 F"}
+                </Button>
+              </Tooltip>
+              <Tooltip
+                title={railBlock?.title ?? (player.getOutCards <= 0 ? "Aucune carte" : "Sortie de prison")}
+                detail={
+                  railBlock?.detail ??
+                  (player.getOutCards <= 0
+                    ? "Il faut une carte Sortie de prison, tirée d'un paquet Baraka ou Teranga, pour sortir sans payer."
+                    : "La carte est dépensée et vous sortez sans rien payer.")
+                }
+              >
+                <Button
+                  face="bone"
+                  size={secondarySize}
+                  icon="key"
+                  disabled={blocked || player.getOutCards <= 0}
+                  onClick={() => dispatch({ t: "use-jail-card" })}
+                >
+                  {compact ? `${player.getOutCards}` : `Carte (${player.getOutCards})`}
+                </Button>
+              </Tooltip>
+            </>
+          ) : game.phase === "turn-start" ? (
+            <Tooltip
+              title={railBlock?.title ?? "Lancer les dés"}
+              detail={
+                railBlock?.detail ??
+                "Votre pion avance du total des deux dés. Un double vous fait rejouer — trois d'affilée vous envoient à Rebeuss."
+              }
+            >
               <Button
                 face="gold"
                 size={primarySize}
                 icon="dice"
-                disabled={blocked}
+                disabled={blocked || offerWaiting}
                 onClick={() => dispatch({ t: "roll" })}
               >
-                {compact ? "Double" : "Tenter un double"}
+                {compact ? "Lancer" : "Lancer les dés"}
               </Button>
-              <Button
-                face="teal"
-                size={secondarySize}
-                icon="coins"
-                disabled={blocked || player.money < 50}
-                onClick={() => dispatch({ t: "pay-fine" })}
-              >
-                {compact ? "50 F" : "Payer 50 F"}
-              </Button>
+            </Tooltip>
+          ) : game.phase === "post-roll" ? (
+            <Tooltip
+              title={railBlock?.title ?? "Terminer le tour"}
+              detail={
+                railBlock?.detail ??
+                "Passe la main. C'est aussi le moment où une offre restée sans réponse expire — bâtissez ou hypothéquez avant, si vous y tenez."
+              }
+            >
               <Button
                 face="bone"
-                size={secondarySize}
-                icon="key"
-                disabled={blocked || player.getOutCards <= 0}
-                onClick={() => dispatch({ t: "use-jail-card" })}
+                size={primarySize}
+                icon="check"
+                disabled={blocked}
+                onClick={() => dispatch({ t: "end-turn" })}
               >
-                {compact ? `${player.getOutCards}` : `Carte (${player.getOutCards})`}
+                {compact ? "Terminer" : "Terminer le tour"}
               </Button>
-            </>
-          ) : game.phase === "turn-start" ? (
-            <Button
-              face="gold"
-              size={primarySize}
-              icon="dice"
-              disabled={blocked}
-              onClick={() => dispatch({ t: "roll" })}
-            >
-              {compact ? "Lancer" : "Lancer les dés"}
-            </Button>
-          ) : game.phase === "post-roll" ? (
-            <Button
-              face="bone"
-              size={primarySize}
-              icon="check"
-              disabled={blocked}
-              onClick={() => dispatch({ t: "end-turn" })}
-            >
-              {compact ? "Terminer" : "Terminer le tour"}
-            </Button>
+            </Tooltip>
           ) : (
             waiting
           )}
