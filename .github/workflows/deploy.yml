@@ -1,15 +1,17 @@
 name: Deploy
 
-# Publishes the board to GitHub Pages on every push to pre-prod, so a game can
-# be started from a phone that is not on the same Wi-Fi as the laptop.
+# Publishes the board to GitHub Pages on every push to main.
 #
-# pre-prod is the stage before main: what lands here is what gets played
-# against for real, and only what survives that moves on. A repository has a
-# single Pages site, so main deliberately does not publish — it holds the code
-# that has already been through here.
+# pre-prod stays the stage before it — what lands there is what gets played
+# against before anyone calls it done — but a repository has a single Pages
+# site, and the one people are given a link to should be the code that has
+# finished going through that stage. It is main that is online.
+#
+# pre-prod can still be published on purpose from the Actions tab, which is
+# what `workflow_dispatch` is for.
 on:
   push:
-    branches: [pre-prod]
+    branches: [main]
   workflow_dispatch:
 
 permissions:

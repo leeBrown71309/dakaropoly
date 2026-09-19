@@ -2,6 +2,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { quitToHome } from "../leaveGame";
+import { useIsOnline, useIsSpectator } from "../useTurn";
+import { useRoom } from "../../net/roomStore";
+import { formatCode } from "../../net/room";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { Money } from "../kit/Money";
@@ -16,6 +19,9 @@ export function ConfirmQuit() {
   const cancelQuit = useGame((s) => s.cancelQuit);
   const game = useGame((s) => s.game);
   const compact = useCompact();
+  const online = useIsOnline();
+  const spectating = useIsSpectator();
+  const code = useRoom((s) => s.code);
 
   return (
     <AnimatePresence>
@@ -52,16 +58,50 @@ export function ConfirmQuit() {
               </div>
 
               <div className={compact ? "px-3 pb-3 pt-2" : "px-4 pb-4 pt-3"}>
+                {/*
+                  * Online there is a way back, so saying there is not was
+                  * simply false — the board lives in the room, not on this
+                  * device. What is actually at stake is the chair, which
+                  * anybody may take once it is free, and the code, which is
+                  * the only way in. Both are worth reading before leaving.
+                  */}
                 <p className={`leading-snug text-ink-700 ${compact ? "text-[11.5px]" : "text-[13px]"}`}>
-                  La partie en cours sera <b>définitivement effacée</b>. Il n'y a pas de retour en
-                  arrière.
+                  {!online ? (
+                    <>
+                      La partie en cours sera <b>définitivement effacée</b>. Il n'y a pas de retour
+                      en arrière.
+                    </>
+                  ) : spectating ? (
+                    <>La partie continue sans vous. Vous pourrez revenir avec le code du salon.</>
+                  ) : (
+                    <>
+                      La partie continue sans vous et <b>votre place se libère</b>. Vous pourrez la
+                      reprendre avec le code du salon, tant que personne d'autre ne s'y assoit.
+                    </>
+                  )}
                 </p>
+
+                {online && code && (
+                  <div
+                    className="mt-2.5 flex items-center gap-2 rounded-[3px] px-2.5 py-1.5"
+                    style={{
+                      background: "rgba(120,95,60,.07)",
+                      boxShadow: "inset 0 0 0 1px rgba(110,86,52,.2)",
+                    }}
+                  >
+                    <Icon name="key" size={13} className="shrink-0 text-ink-500" />
+                    <Label>Code du salon</Label>
+                    <span className="u-display ml-auto tracking-[0.14em] text-ink-900">
+                      {formatCode(code)}
+                    </span>
+                  </div>
+                )}
 
                 {game && (
                   <>
                     <BrassRule className={compact ? "my-2" : "my-3"} />
                     <div className="flex items-center justify-between">
-                      <Label>En cours</Label>
+                      <Label>{online ? "La partie continue" : "En cours"}</Label>
                       <span className="text-[12px] text-ink-500">
                         {game.players.filter((p) => !p.bankrupt).length} joueurs · tour{" "}
                         {game.turnCount + 1}
@@ -85,7 +125,13 @@ export function ConfirmQuit() {
                   <Button face="bone" size={compact ? "sm" : "md"} block onClick={cancelQuit}>
                     Continuer à jouer
                   </Button>
-                  <Button face="clay" size={compact ? "sm" : "md"} icon="flag" block onClick={quitToHome}>
+                  <Button
+                    face="clay"
+                    size={compact ? "sm" : "md"}
+                    icon={online ? "arrowLeft" : "flag"}
+                    block
+                    onClick={quitToHome}
+                  >
                     Quitter
                   </Button>
                 </div>

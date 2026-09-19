@@ -109,11 +109,18 @@ export function Home() {
           </Card>
         </motion.div>
 
-        {!compact && (
-          <p className="absolute bottom-5 text-[11.5px] text-sand-300/60">
-            Fait maison, pour les soirées en famille.
-          </p>
-        )}
+        {/*
+          * Shown at every size now that it carries a name: a credit only the
+          * desktop sees is half a credit, and most of this gets played on a
+          * phone.
+          */}
+        <p
+          className={`absolute text-center text-sand-300/60 ${
+            compact ? "bottom-1 text-[10px]" : "bottom-5 text-[11.5px]"
+          }`}
+        >
+          Fait maison, pour les soirées en famille. Créé par Leeeight.
+        </p>
       </div>
     </div>
   );
