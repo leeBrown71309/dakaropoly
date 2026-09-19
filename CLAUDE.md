@@ -8,6 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `README.md` and `HANDOFF.md` (both in French) describe the board, the rules covered, what is done, and what remains. Read `HANDOFF.md` before picking up unfinished work.
 
+## Branches
+
+`online-part` is where work happens, `pre-prod` is where it is played against
+before anyone calls it done, and **`main` is what is online** — the Pages
+workflow publishes on a push to it. So a change goes `online-part` →
+`pre-prod` → `main`, and the link people are given always points at code that
+has already been through the middle step.
+
 ## Commands
 
 Package manager is **bun**.
