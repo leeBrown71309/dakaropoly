@@ -69,6 +69,16 @@ interface Store {
   diceThrow: { recording: DiceThrow; startedAt: number } | null;
   cardView: { deck: "chance" | "chest"; card: CardDef } | null;
   cardResolve: (() => void) | null;
+  /**
+   * An acknowledgement that arrived before the queue reached the card.
+   *
+   * Online the ack comes over the wire, but `cardResolve` only exists once
+   * *this* device's pump is parked on the card — and two devices drain the
+   * same events at different speeds, because token pace and announcement
+   * duration are settings each player owns. Remembering the ack is what
+   * keeps an early one from resolving nothing at all.
+   */
+  earlyCardAck: boolean;
   /** Card shown for a thing that happened *to* the player; auto-dismisses. */
   announcement: Announcement | null;
   /**
@@ -111,8 +121,14 @@ interface Store {
    * spectator: they watch the same board and never act on it.
    */
   adoptGame: (game: GameState, localPlayerId: number | null) => void;
-  /** Plays an action here and now. Online this is driven by the wire. */
-  applyLocally: (action: Action) => void;
+  /**
+   * Plays an action here and now; online this is driven by the wire.
+   *
+   * Reports whether the engine took it. The relay needs to know: an action
+   * this board refuses is one the sender's board did not, and counting it as
+   * played would hide the gap between them for good.
+   */
+  applyLocally: (action: Action) => boolean;
   /** Plays an action, or sends it if this game is online. */
   dispatch: (action: Action) => void;
   ackCard: () => void;
@@ -182,6 +198,28 @@ function enqueue(events: GameEvent[]): void {
   void pump();
 }
 
+/**
+ * Lets a card go, whether or not the queue has reached it yet.
+ *
+ * `cardResolve` exists only while the pump is parked on the card, and online
+ * the acknowledgement arrives from another device — one that may have got
+ * there first. When there is nothing to resolve the release is remembered
+ * instead, and spent when the card finally comes up.
+ *
+ * `applied` is false when the engine refused the acknowledgement, which means
+ * no card was pending here: releasing whatever is parked is still right, but
+ * remembering an ack for a card still to come would swallow the next one.
+ */
+function releaseCard(applied: boolean): void {
+  const resolve = useGame.getState().cardResolve;
+  useGame.setState({
+    cardResolve: null,
+    cardView: null,
+    earlyCardAck: applied && resolve === null,
+  });
+  resolve?.();
+}
+
 async function pump(): Promise<void> {
   if (pumping) return;
   pumping = true;
@@ -247,6 +285,13 @@ async function handleEvent(ev: GameEvent): Promise<void> {
     }
     case "show-card": {
       sfx.play("card");
+      // The player who drew it dismissed it before this device's queue even
+      // got here. Parking on a promise whose release has already been and
+      // gone is what froze the board for the rest of the evening.
+      if (useGame.getState().earlyCardAck) {
+        useGame.setState({ earlyCardAck: false });
+        return;
+      }
       useGame.setState({ cardView: { deck: ev.deck, card: CARDS_BY_ID[ev.cardId] as CardDef } });
       await new Promise<void>((resolve) => {
         useGame.setState({ cardResolve: resolve });
@@ -363,6 +408,7 @@ export const useGame = create<Store>()(
     diceThrow: null,
     cardView: null,
     cardResolve: null,
+    earlyCardAck: false,
     announcement: null,
     animating: false,
     settings: DEFAULT_SETTINGS,
@@ -401,6 +447,7 @@ export const useGame = create<Store>()(
         diceThrow: null,
         cardView: null,
         cardResolve: null,
+        earlyCardAck: false,
         announcement: null,
         animating: false,
         settingsOpen: false,
@@ -432,6 +479,7 @@ export const useGame = create<Store>()(
         diceThrow: null,
         cardView: null,
         cardResolve: null,
+        earlyCardAck: false,
         announcement: null,
         animating: false,
         settingsOpen: false,
@@ -464,6 +512,7 @@ export const useGame = create<Store>()(
         // a client arriving mid-draw has to see it too.
         cardView: pending && card ? { deck: pending.deck, card } : null,
         cardResolve: null,
+        earlyCardAck: false,
         announcement: null,
         animating: false,
         settingsOpen: false,
@@ -479,22 +528,22 @@ export const useGame = create<Store>()(
     },
     applyLocally: (action) => {
       const game = get().game;
-      if (!game) return;
+      if (!game) return false;
+      let applied = false;
       try {
         const res = applyAction(game, action);
         set({ game: res.state });
         enqueue(res.events);
-        if (action.t === "ack-card") {
-          // The queue is parked on this promise. Release it *after* the
-          // follow-up events are queued, so the pump runs straight on
-          // rather than draining, stopping, and starting again.
-          const resolve = get().cardResolve;
-          set({ cardResolve: null, cardView: null });
-          resolve?.();
-        }
+        applied = true;
       } catch (e) {
         pushToast(e instanceof Error ? e.message : "Action impossible", "bad");
       }
+      // Released *after* the follow-up events are queued, so the pump runs
+      // straight on rather than draining, stopping and starting again — and
+      // outside the try, because an acknowledgement the engine refuses must
+      // still let the queue go rather than strand it on the card for good.
+      if (action.t === "ack-card") releaseCard(applied);
+      return applied;
     },
     dispatch: (action) => {
       // A spectator has a relay like everyone else, and anything they sent

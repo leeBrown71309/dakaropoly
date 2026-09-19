@@ -819,7 +819,16 @@ async function handle(
         await resync(code, clientId, set);
         return;
       }
-      useGame.getState().applyLocally(msg.action);
+      if (!useGame.getState().applyLocally(msg.action)) {
+        // The engine refused here what it took on the device that played it,
+        // so this board is not where that one was. Counting the action as
+        // played anyway would line every later `from` up against a version
+        // this board never earned: the guard would agree for ever while the
+        // two drifted apart, which is how one screen ends up naming a player
+        // the other is waiting on. Take the snapshot instead.
+        await resync(code, clientId, set);
+        return;
+      }
       set({ version: version + 1 });
 
       // Only the device that played writes the snapshot, so a turn costs one
