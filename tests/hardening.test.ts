@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyAction, createGame } from "../src/game/engine";
+import { rentFor, rentRow } from "../src/game/selectors";
+import { STATION_POS, tileAt } from "../src/game/data/board";
 import type { GameState } from "../src/game/types";
 
 /**
@@ -536,5 +538,49 @@ describe("an offer is answered before the dice", () => {
     s = applyAction(s, { t: "auction-pass" }).state;
 
     for (const p of s.players) expect(p.money).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("the line a title deed picks out", () => {
+  it("counts the station about to be bought, not the ones already held", () => {
+    // Two gares in hand, standing on a third. The card used to print the
+    // first line whatever the board said, so a player holding two stations
+    // was told they held one — while the rent charged was right all along.
+    let s = own(own(makeGame(), 5, 0), 15, 0);
+
+    expect(rentRow(s, 25, 0)).toBe(2); // buying it makes three
+    expect(rentFor(s, 25, 7)).toBe(0); // unowned, so nothing is charged yet
+
+    s = own(s, 25, 0);
+    expect(rentRow(s, 25, 0)).toBe(2); // already theirs: the same line
+    expect(rentFor(s, 25, 7)).toBe(100); // and that line is the rent charged
+  });
+
+  it("does not count another player's stations", () => {
+    const s = own(own(makeGame(), 5, 1), 15, 1);
+    expect(rentRow(s, 25, 0)).toBe(0); // J0 holds none; this would be their first
+    expect(rentRow(s, 25, 1)).toBe(2); // J1 holds two; this would be their third
+  });
+
+  it("reads the houses standing on a street", () => {
+    const s = makeGame();
+    const built: GameState = { ...s, tiles: s.tiles.map((t, i) => (i === 1 ? { ...t, owner: 0, houses: 3 } : t)) };
+    expect(rentRow(built, 1, 0)).toBe(3);
+  });
+
+  it("counts the second utility the same way", () => {
+    const s = own(makeGame(), 12, 0);
+    expect(rentRow(s, 28, 0)).toBe(1); // buying SDE gives the pair
+    expect(rentRow(s, 28, 1)).toBe(0); // for anybody else it is a first
+  });
+});
+
+describe("the board names its stations alike", () => {
+  it("calls every one of them a gare", () => {
+    // "Station Almadies" was the odd one out on a board where the kind of
+    // thing a square is *is* the information.
+    for (const pos of STATION_POS) {
+      expect(tileAt(pos).name.startsWith("Gare")).toBe(true);
+    }
   });
 });

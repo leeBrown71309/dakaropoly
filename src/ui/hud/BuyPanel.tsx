@@ -3,6 +3,7 @@ import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useWaitingFor } from "../useTurn";
 import { BOARD } from "../../game/data/board";
+import { rentRow } from "../../game/selectors";
 import { formatMoney, type TileDef } from "../../game/types";
 import { decisionAnchor } from "./anchor";
 import { TitleDeed } from "../kit/TitleDeed";
@@ -35,7 +36,10 @@ export function BuyPanel() {
       transition={{ type: "spring", stiffness: 320, damping: 30 }}
       className={decisionAnchor(compact)}
     >
-      <TitleDeed pos={pos} activeRow={0} dense={compact} />
+      {/* The line this purchase would put the buyer on, not the first one.
+          A player holding two stations was being shown "1 gare possédée" on
+          the card for their third. */}
+      <TitleDeed pos={pos} activeRow={rentRow(game, pos, game.current)} dense={compact} />
 
       <div
         className={`mt-1.5 flex items-center justify-between rounded-[3px] ${

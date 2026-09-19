@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
 import { useCompact } from "../useViewport";
 import { useIsMyTurn, useMySeat } from "../useTurn";
-import { BOARD, GROUP_MEMBERS, GROUP_ORDER, STATION_POS, UTILITY_POS } from "../../game/data/board";
+import { BOARD, GROUP_MEMBERS, GROUP_ORDER } from "../../game/data/board";
 import { GROUP_COLORS, GROUP_NAMES, GROUP_ON_COLOR } from "../../game/colors";
 import {
   canBuildOn,
@@ -13,9 +13,10 @@ import {
   houseRefund,
   mortgageValue,
   ownedPositions,
+  rentRow,
   unmortgageCost,
 } from "../../game/selectors";
-import { formatMoney, type ColorGroup, type GameState, type Player } from "../../game/types";
+import { formatMoney, type ColorGroup, type Player } from "../../game/types";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { Money } from "../kit/Money";
@@ -158,23 +159,6 @@ export function ManagePanel() {
   );
 }
 
-/**
- * Which line of the title deed is the rent this property earns right now.
- *
- * A register that prints six figures without saying which one is live leaves
- * the reading to be done twice — once off the card, once off the board.
- */
-function activeRentRow(game: GameState, pos: number): number {
-  const tile = BOARD[pos];
-  const state = game.tiles[pos];
-  if (!tile || !state) return 0;
-  if (tile.kind === "street") return state.houses;
-  if (tile.kind === "station") {
-    return Math.max(1, STATION_POS.filter((p) => game.tiles[p]?.owner === state.owner).length) - 1;
-  }
-  return UTILITY_POS.filter((p) => game.tiles[p]?.owner === state.owner).length === 2 ? 1 : 0;
-}
-
 function PropertyRow({ pos, player, group }: { pos: number; player: Player; group?: ColorGroup }) {
   const game = useGame((s) => s.game);
   const dispatch = useGame((s) => s.dispatch);
@@ -242,7 +226,7 @@ function PropertyRow({ pos, player, group }: { pos: number; player: Player; grou
             transition={{ duration: 0.18, ease: "easeOut" }}
             className="overflow-hidden"
           >
-            <TitleDeed pos={pos} activeRow={activeRentRow(game, pos)} dense className="mt-1.5" />
+            <TitleDeed pos={pos} activeRow={rentRow(game, pos, player.id)} dense className="mt-1.5" />
           </motion.div>
         )}
       </AnimatePresence>
