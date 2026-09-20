@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
+import { NAME_MAX } from "../../game/types";
 import { useCompact } from "../useViewport";
 import { PAWN_NAMES, PAWN_SHAPES, PLAYER_COLORS } from "../../game/data/pawns";
 import { Card, Label, BrassRule } from "../kit/Surface";
@@ -107,7 +108,7 @@ export function Setup() {
                             value={p.name}
                             onChange={(e) => update(i, { name: e.target.value })}
                             placeholder={`Joueur ${i + 1}`}
-                            maxLength={14}
+                            maxLength={NAME_MAX}
                             className={`field ${compact ? "py-1 text-[12.5px]" : "text-[14px]"}`}
                           />
                           <div className="mt-1.5 flex flex-wrap gap-1">

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
-import { useRoom } from "../../net/roomStore";
+import { useRoom, type ChatMessage } from "../../net/roomStore";
+import type { Seat } from "../../net/room";
 import { useCompact } from "../useViewport";
 import { BrassRule } from "../kit/Surface";
 import { Fitting } from "../kit/Button";
@@ -9,6 +10,17 @@ import { Icon } from "../icons/Icon";
 
 const clock = (at: number): string =>
   new Date(at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * Who the sender was to the table when they spoke. Messages written before
+ * the badge existed read the current roster instead — the best answer left
+ * once their own device stopped recording the fact.
+ */
+const roleOf = (m: ChatMessage, seats: Seat[]): string => {
+  const role =
+    m.role ?? (seats.some((s) => s.clientId === m.clientId && s.seat !== null) ? "player" : "spectator");
+  return role === "player" ? "joueur" : "spectateur";
+};
 
 /**
  * The written chat, pinned above the rail beside the journal.
@@ -22,6 +34,7 @@ export function ChatPanel() {
   const chatOpen = useGame((s) => s.chatOpen);
   const toggleChat = useGame((s) => s.toggleChat);
   const messages = useRoom((s) => s.messages);
+  const seats = useRoom((s) => s.seats);
   const say = useRoom((s) => s.say);
   const markRead = useRoom((s) => s.markRead);
   const myClientId = useRoom((s) => s.clientId);
@@ -82,6 +95,11 @@ export function ChatPanel() {
                   }`}
                 >
                   {m.name}
+                </span>
+                <span
+                  className={`u-label ml-1.5 ${roleOf(m, seats) === "joueur" ? "text-teal-700/70" : "text-ink-300"}`}
+                >
+                  {roleOf(m, seats)}
                 </span>
                 <span className="ml-1 text-[10px] text-ink-300">{clock(m.at)}</span>
                 <div

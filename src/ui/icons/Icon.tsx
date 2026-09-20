@@ -40,6 +40,7 @@ export type IconName =
   | "shrink"
   | "cog"
   | "book"
+  | "pen"
   | "ranking"
   | "eye"
   | "chat"
@@ -270,6 +271,12 @@ const ICONS: Record<IconName, ReactNode> = {
   plus: <path d="M12 5.2v13.6M5.2 12h13.6" />,
   minus: <path d="M5.2 12h13.6" />,
   close: <path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8" />,
+  pen: (
+    <>
+      <path d="M4.2 19.8h3.2L19 8.2l-3.2-3.2L4.2 16.6z" />
+      <path d="M14.6 6.2l3.2 3.2" />
+    </>
+  ),
 };
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, "name"> {
