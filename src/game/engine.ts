@@ -12,6 +12,7 @@ import { BOARD, GROUP_MEMBERS, STATION_POS, UTILITY_POS, tileAt } from "./data/b
 import { CARDS_BY_ID, DECK_IDS } from "./data/cards";
 import { PLAYER_COLORS } from "./data/pawns";
 import { mortgageValue, ownedPositions, rentFor } from "./selectors";
+import { NAME_MAX } from "./types";
 
 export const START_MONEY = 1500;
 export const SALARY = 200;
@@ -1032,6 +1033,23 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
       const from = s.players[pending.from] as Player;
       s.pendingTrade = null;
           events.push({ t: "toast", text: `${from.name} retire son offre`, tone: "info" });
+      break;
+    }
+    case "rename": {
+      // No phase gate: the name belongs to whoever is sitting in the chair,
+      // and a chair is often taken over exactly between other people's turns.
+      const target = s.players[action.playerId];
+      if (!target) throw new Error("Joueur inconnu");
+      const clean = action.name.trim().slice(0, NAME_MAX);
+      if (!clean) throw new Error("Il faut un nom pour que les autres vous reconnaissent");
+      if (target.name !== clean) {
+        events.push({
+          t: "toast",
+          text: `${target.name} joue maintenant sous le nom de ${clean}`,
+          tone: "info",
+        });
+        target.name = clean;
+      }
       break;
     }
     default:

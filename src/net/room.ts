@@ -199,6 +199,19 @@ export async function touchSeat(code: string): Promise<void> {
 }
 
 /**
+ * Renames the chair this device holds in the roster — or the spectator's own
+ * row, when they claimed one in the lobby. The name the engine carries is a
+ * separate matter: that one travels as an action every client replays, and
+ * nobody without a seat has one at all. A caller with no row is not an error
+ * by the function's own terms; a door spectator simply has nothing to rename
+ * this side of the board.
+ */
+export async function renameSeat(code: string, name: string): Promise<void> {
+  const { error } = await supabase().rpc("rename_seat", { p_code: code, p_name: name });
+  if (error) throw new Error(error.message);
+}
+
+/**
  * Takes a chair back in a game already in progress — this device's own after
  * a reload, or one whose occupant has gone. The database re-checks that it is
  * free; what the interface offers is only what it believes.

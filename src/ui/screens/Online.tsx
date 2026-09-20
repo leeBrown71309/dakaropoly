@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
+import { NAME_MAX } from "../../game/types";
 import { useRoom } from "../../net/roomStore";
 import { formatCode, inviteLink, normaliseCode, CODE_SIZE, seatedInOrder } from "../../net/room";
 import { PAWN_NAMES, PAWN_SHAPES, PLAYER_COLORS } from "../../game/data/pawns";
@@ -114,7 +115,7 @@ export function Online() {
                   onChange={(e) => setName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && submit()}
                   placeholder="Comment on vous appelle ?"
-                  maxLength={14}
+                  maxLength={NAME_MAX}
                   className="field mt-1 text-[14px]"
                 />
 
@@ -233,6 +234,18 @@ function Lobby({ compact }: { compact: boolean }) {
     .filter((s) => s.clientId !== clientId && s.pawn !== null)
     .map((s) => s.pawn as number);
 
+  // The lobby name field is held only while it is focused: the roster keeps
+  // arriving from the channel, and an uncontrolled echo would fight the
+  // keyboard on every keystroke. The Modifier button is the moment of truth —
+  // no blur commit, so a stray click elsewhere never renames anybody.
+  const renameSelf = useRoom((s) => s.renameSelf);
+  const [draftName, setDraftName] = useState<string | null>(null);
+  const commitName = () => {
+    const clean = (draftName ?? "").trim();
+    setDraftName(null);
+    if (me && clean && clean !== me.name) void renameSelf(clean);
+  };
+
   const quit = () => {
     void leave().then(goHome);
   };
@@ -314,7 +327,28 @@ function Lobby({ compact }: { compact: boolean }) {
         {me && (
           <>
             <BrassRule className="my-2.5" />
-            <Label>Changer de pion</Label>
+            <Label>Votre nom</Label>
+            <div className="mt-1 flex items-center gap-1.5">
+              <input
+                value={draftName ?? me.name}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                maxLength={NAME_MAX}
+                className="field min-w-0 flex-1 text-[14px]"
+              />
+              <Button
+                face="bone"
+                size="sm"
+                icon="pen"
+                disabled={busy || !draftName || draftName.trim().length === 0 || draftName.trim() === me.name}
+                onClick={commitName}
+              >
+                Modifier
+              </Button>
+            </div>
+            <Label className="mt-2.5">Changer de pion</Label>
             <PawnPicker
               value={me.pawn}
               taken={takenPawns}

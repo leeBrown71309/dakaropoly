@@ -217,8 +217,21 @@ export type Action =
   | { t: "offer-trade"; offer: TradeOffer }
   | { t: "accept-trade" }
   | { t: "reject-trade" }
-  | { t: "withdraw-trade" };
+  | { t: "withdraw-trade" }
+  /**
+   * Taking up a new name mid-game — after a late arrival sits in somebody's
+   * abandoned chair, the board still says the old name. A name is display,
+   * not a rule, so this is legal in any phase and belongs to the numbered
+   * player rather than to whoever is to move.
+   */
+  | { t: "rename"; playerId: number; name: string };
 
 export type ApplyResult = { state: GameState; events: GameEvent[] };
+
+/**
+ * How long a player's name may be. The join form, the rename fields and the
+ * engine all cut the name to this, so nobody can wear a banner as a name.
+ */
+export const NAME_MAX = 14;
 
 export const formatMoney = (n: number): string => `${n.toLocaleString("fr-FR")} F`;

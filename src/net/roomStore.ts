@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { Action, GameState } from "../game/types";
+import { NAME_MAX } from "../game/types";
 import { createGame } from "../game/engine";
 import { pushToast, setActionRelay, useGame } from "../game/store";
 import { sfx } from "../audio/sounds";
@@ -23,6 +24,7 @@ import {
   fetchRoomAndSeats,
   leaveRoom,
   pushSnapshot,
+  renameSeat,
   setSpectatorVoice,
   resumeSeat,
   seatOffers,
@@ -54,6 +56,14 @@ type Wire =
   | VoiceWire;
 
 /**
+ * Whether the writer of a message sat at the table or stood behind it at the
+ * moment they wrote it. Recorded rather than looked up: a player who gave up
+ * their chair halfway through the evening should not have everything they
+ * said retroactively demoted to spectator talk.
+ */
+export type ChatRole = "player" | "spectator";
+
+/**
  * Something somebody said. Carried on the channel that is already open for
  * the game itself — Realtime *is* a WebSocket, so a written chat costs a
  * message type and nothing else: no second service, no second connection.
@@ -65,6 +75,8 @@ export interface ChatMessage {
   id: string;
   clientId: string;
   name: string;
+  /** Absent on messages persisted before the badge existed. */
+  role?: ChatRole;
   text: string;
   at: number;
 }
@@ -140,6 +152,8 @@ interface RoomState {
   watch: () => Promise<void>;
   cancelPending: () => void;
   setPawn: (pawn: number | null, name: string) => Promise<void>;
+  /** Takes a new name for this device, and for the chair it holds. */
+  renameSelf: (name: string) => Promise<void>;
   start: () => Promise<void>;
   leave: () => Promise<void>;
   /** Picks the room back up after a reload, or after a failed attempt. */
@@ -220,12 +234,13 @@ export const useRoom = create<RoomState>()(
        */
       say: (text) => {
         const trimmed = text.trim().slice(0, CHAT_MAX_CHARS);
-        const { clientId, myName } = get();
+        const { clientId, myName, seats } = get();
         if (!trimmed || !channel || !clientId) return;
         const msg: ChatMessage = {
           id: `${clientId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           clientId,
           name: myName ?? "Un joueur",
+          role: seats.some((s) => s.clientId === clientId && s.seat !== null) ? "player" : "spectator",
           text: trimmed,
           at: Date.now(),
         };
@@ -337,6 +352,46 @@ export const useRoom = create<RoomState>()(
           channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
         } catch (e) {
           set({ error: message(e) });
+        }
+      },
+
+      /**
+       * Changing one's own name, and only one's own.
+       *
+       * A name is kept in three places, and a rename has to visit each of
+       * them: the board, where the engine froze it at kickoff; the roster,
+       * where the chair records who occupies it now; and presence, which is
+       * all a spectator ever is to the room. The board's copy is not simply
+       * overwritten here — it travels as an action every client replays, so
+       * every screen renames at the same moment in the same order, and the
+       * device that renamed writes the snapshot like any other action's.
+       */
+      renameSelf: async (name) => {
+        const { code, clientId, seats, seatOrder } = get();
+        if (!code || !clientId) return;
+        const clean = name.trim().slice(0, NAME_MAX);
+        if (!clean) {
+          set({ error: "Il faut un nom pour que les autres vous reconnaissent" });
+          return;
+        }
+        const seat = seatOf(seatOrder, seats, clientId);
+        set({ myName: clean });
+        void channel?.track({ at: Date.now(), name: clean, voice: voiceIsOn() } satisfies WatchPresence);
+        try {
+          // The roster first: the action below makes the snapshot carry the
+          // new name, and a device that pulled the room in between should
+          // find both halves agreeing, not one waiting on the other.
+          await renameSeat(code, clean);
+          if (seat !== null) {
+            useGame.getState().dispatch({ t: "rename", playerId: seat, name: clean });
+          }
+          await refreshSeats(code, set);
+          channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
+        } catch (e) {
+          // The lobby reads `error` as a banner; mid-game the room panel is
+          // the only surface, so the refusal has to find the toast lane.
+          set({ error: message(e) });
+          pushToast(message(e), "bad");
         }
       },
 
@@ -813,6 +868,18 @@ async function handle(
     }
 
     case "action": {
+      // A rename names the player being renamed, and an id on the wire is
+      // only as honest as the chair behind it: `seat_order` and the roster
+      // together say which player `by` actually holds. A rename that does
+      // not match our table is usually this device being a beat behind —
+      // the roster broadcast and the action raced — so take the snapshot
+      // rather than drop the action and drift: a dropped *state-changing*
+      // action leaves this version counter agreeing while the board under
+      // it quietly diverges.
+      if (msg.action.t === "rename" && seatOf(get().seatOrder, get().seats, msg.by) !== msg.action.playerId) {
+        await resync(code, clientId, set);
+        return;
+      }
       const version = get().version;
       if (msg.from !== version) {
         // Someone is a step ahead or behind: trust the snapshot, not us.

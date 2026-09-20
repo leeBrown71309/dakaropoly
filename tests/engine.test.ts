@@ -301,6 +301,37 @@ describe("moteur Dakaropoly", () => {
     expect(new Set(s.decks.chance).size).toBe(16);
     expect(new Set(s.decks.chest).size).toBe(16);
   });
+
+  it("rename works in any phase and only touches the named player", () => {
+    const s = { ...makeGame(), phase: "auction" as const };
+    const res = applyAction(s, { t: "rename", playerId: 1, name: "Moussa" });
+    expect(p(res.state, 1).name).toBe("Moussa");
+    expect(p(res.state, 0).name).toBe("J0");
+    expect(res.state.phase).toBe("auction");
+  });
+
+  it("rename tells the room under the old name", () => {
+    const res = applyAction(makeGame(), { t: "rename", playerId: 0, name: "Fatou" });
+    const toast = res.events.find((e) => e.t === "toast");
+    if (!toast || toast.t !== "toast") throw new Error("no toast");
+    expect(toast.text).toContain("J0");
+    expect(toast.text).toContain("Fatou");
+    expect(res.state.log.some((line) => line.includes("Fatou"))).toBe(true);
+  });
+
+  it("rename refuses an empty name and clamps a long one", () => {
+    const s = makeGame();
+    expect(() => applyAction(s, { t: "rename", playerId: 0, name: "   " })).toThrow();
+    expect(() => applyAction(s, { t: "rename", playerId: 9, name: "X" })).toThrow();
+    const long = applyAction(s, { t: "rename", playerId: 0, name: "a".repeat(40) });
+    expect(p(long.state, 0).name).toHaveLength(14);
+  });
+
+  it("renaming to the same name is silent", () => {
+    const res = applyAction(makeGame(), { t: "rename", playerId: 0, name: " J0 " });
+    expect(res.events).toHaveLength(0);
+    expect(p(res.state, 0).name).toBe("J0");
+  });
 });
 
 const HOUSE_STOCK_MAX_TEST = 32;
