@@ -228,6 +228,37 @@ begin
 end;
 $$;
 
+-- What a chair is called in the roster. The name on the board is the
+-- engine's business — it froze that name at kickoff and every client carries
+-- it — but the roster is what announcements and the room panel read, and a
+-- late arrival who took somebody's abandoned chair would otherwise keep that
+-- somebody's name on it for the rest of the evening.
+--
+-- Updating nobody is a success, not a failure: a spectator who came in
+-- through the spectator door has no row anywhere. Their name lives in
+-- presence, not in a table.
+create or replace function public.rename_seat(p_code text, p_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Identité manquante' using errcode = '28000';
+  end if;
+  if btrim(p_name) = '' then
+    raise exception 'Il faut un nom' using errcode = '22023';
+  end if;
+
+  update public.room_players
+     set name = left(btrim(p_name), 14), last_seen = now()
+   where room_code = p_code and client_id = me;
+end;
+$$;
+
 -- The host, and only the host, decides whether spectators get a microphone.
 create or replace function public.set_spectator_voice(p_code text, p_allowed boolean)
 returns void
@@ -362,6 +393,7 @@ revoke execute on function public.get_room(text) from anon;
 revoke execute on function public.create_room(text) from anon;
 revoke execute on function public.claim_seat(text, uuid, text, smallint) from anon;
 revoke execute on function public.resume_seat(text, smallint) from anon;
+revoke execute on function public.rename_seat(text, text) from anon;
 revoke execute on function public.touch_seat(text) from anon;
 revoke execute on function public.set_spectator_voice(text, boolean) from anon;
 revoke execute on function public.leave_room(text) from anon;

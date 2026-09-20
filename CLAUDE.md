@@ -214,6 +214,20 @@ matter live there, not in the client.
 - **Chat rides the game channel.** Realtime *is* a WebSocket, so the written
   chat is one more message type on the socket that is already open: no second
   service, no second connection, nothing stored. Talk belongs to the evening.
+  Each message carries the writer's role — `joueur` or `spectateur`, worn as
+  a badge by `ChatPanel` — recorded at send time rather than looked up later,
+  because a player who gave up their chair should not have everything they
+  said retroactively demoted to spectator talk.
+- **A name lives in three places, and `renameSelf` visits all of them.** The
+  board (`players[].name`, frozen at kickoff — renamed through a `rename`
+  engine action so every client replays it at the same point in the sequence
+  and the snapshot carries it), the roster (`rename_seat`, which announcements
+  and the room panel read), and presence (which is all a spectator ever is to
+  the room). Renaming is for one's own name only, and the rule is enforced on
+  the way *in*: `handle` drops a relayed `rename` whose `by` client does not
+  actually hold the numbered player. The affordance exists because taking an
+  absent player's chair leaves their name on every screen — correct by design
+  (`resume_seat` reads it off the board), confusing without the rename.
 
 ### Voice — `src/net/voice.ts`
 

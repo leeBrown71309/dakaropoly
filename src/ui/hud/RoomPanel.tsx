@@ -1,16 +1,19 @@
+import { useState } from "react";
 import { useRoom } from "../../net/roomStore";
 import { useVoice } from "../../net/voice";
 import { formatCode, inviteLink } from "../../net/room";
-import { PLAYER_COLORS } from "../../game/data/pawns";
+import { NAME_MAX } from "../../game/types";
 import { useCompact } from "../useViewport";
 import { useCopy } from "../useCopy";
 import { Label, BrassRule } from "../kit/Surface";
-import { Button } from "../kit/Button";
-import { PawnGlyph } from "../icons/PawnGlyph";
+import { Button, Fitting } from "../kit/Button";
 import { Icon } from "../icons/Icon";
 
 /**
- * The room, from inside the game.
+ * The room, from inside the game — one section per question this panel
+ * answers: who am I here, how do others get in, may the spectators talk,
+ * and is this device still connected. Who sits where is the left roster's
+ * business, and is not repeated here.
  *
  * The code stops being visible the moment play begins, which is exactly when
  * it is needed most: somebody's phone dies, or a friend turns up late, and
@@ -20,9 +23,7 @@ import { Icon } from "../icons/Icon";
  */
 export function RoomPanel() {
   const code = useRoom((s) => s.code);
-  const seats = useRoom((s) => s.seats);
   const present = useRoom((s) => s.present);
-  const watchers = useRoom((s) => s.watchers);
   const clientId = useRoom((s) => s.clientId);
   const reconnecting = useRoom((s) => s.reconnecting);
   const restore = useRoom((s) => s.restore);
@@ -39,10 +40,13 @@ export function RoomPanel() {
 
   const connected = clientId !== null && present.includes(clientId);
   const isHost = clientId !== null && clientId === hostId;
-  const players = seats.filter((s) => s.seat !== null).sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0));
 
   return (
     <div>
+      <RenameRow />
+
+      <BrassRule className="my-3" />
+
       <div className="flex items-center gap-3">
         <div>
           <Label>Code du salon</Label>
@@ -74,42 +78,14 @@ export function RoomPanel() {
         Un joueur qui a quitté la partie peut y revenir avec ce code et reprendre sa place.
       </p>
 
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-        {players.map((s) => {
-          const here = present.includes(s.clientId);
-          return (
-            <span key={s.clientId} className="flex items-center gap-1.5">
-              <span style={{ color: PLAYER_COLORS[s.pawn ?? 0] }} className="shrink-0">
-                <PawnGlyph pawn={s.pawn ?? 0} size={16} />
-              </span>
-              <span className="text-[11.5px] font-bold text-ink-700">{s.name}</span>
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                title={here ? "connecté" : "absent"}
-                style={{ backgroundColor: here ? "#1E6F6B" : "#9A8F7C" }}
-              />
-            </span>
-          );
-        })}
-      </div>
-
-      {watchers.length > 0 && (
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Icon name="eye" size={13} className="shrink-0 text-ink-300" />
-          {watchers.map((w) => (
-            <span key={w.clientId} className="text-[11.5px] text-ink-500">
-              {w.name}
-            </span>
-          ))}
-        </div>
-      )}
+      <BrassRule className="my-3" />
 
       {/*
         * The host's switch. Everyone sees where it stands — a spectator whose
         * microphone is shut should be able to find out why without asking —
         * but only the host can move it, here and in the database.
         */}
-      <div className="mt-2 flex items-center gap-2">
+      <div className="flex items-center gap-2">
         <Icon name="eye" size={14} className="shrink-0 text-ink-300" />
         <div className="min-w-0 flex-1">
           <Label>Micro des spectateurs</Label>
@@ -155,7 +131,7 @@ export function RoomPanel() {
       )}
 
       {!connected && (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-3 flex items-center gap-2">
           <Icon name="warning" size={14} className="shrink-0 text-clay-700" />
           <span className="text-[11.5px] text-ink-700">
             {reconnecting ? "Reconnexion au salon…" : "Vous n'êtes pas connecté au salon."}
@@ -174,6 +150,69 @@ export function RoomPanel() {
       )}
 
       <BrassRule className="my-3" />
+    </div>
+  );
+}
+
+/**
+ * The name this device answers to, and the way to change it.
+ *
+ * It exists for the chair that changes hands: an arrival who takes back an
+ * absent player's seat is announced to the table under that player's frozen
+ * name — by design, because the board, the log and every other screen
+ * already carry it. The rename is how they say who is actually sitting
+ * there, and `renameSelf` carries it to all three names at once. Players
+ * and spectators alike get the row; hot-seat games have no room, and no
+ * room means this panel is not mounted.
+ */
+function RenameRow() {
+  const myName = useRoom((s) => s.myName);
+  const renameSelf = useRoom((s) => s.renameSelf);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const commit = () => {
+    setEditing(false);
+    const clean = draft.trim();
+    if (clean && clean !== myName) void renameSelf(clean);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="min-w-0 flex-1">
+        <Label>Votre nom</Label>
+        <p className="mt-0.5 truncate text-[12.5px] font-bold text-ink-700">{myName ?? "—"}</p>
+      </div>
+      {editing ? (
+        <>
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            maxLength={NAME_MAX}
+            className="field w-32 py-1 text-[12px]"
+          />
+          <Fitting icon="check" label="Valider" disabled={draft.trim().length === 0} onClick={commit} />
+          <Fitting icon="close" label="Annuler" onClick={() => setEditing(false)} />
+        </>
+      ) : (
+        <Button
+          face="bone"
+          size="sm"
+          icon="pen"
+          className="shrink-0"
+          onClick={() => {
+            setDraft(myName ?? "");
+            setEditing(true);
+          }}
+        >
+          Renommer
+        </Button>
+      )}
     </div>
   );
 }
