@@ -87,7 +87,8 @@ Adding an event: extend `GameEvent` in `types.ts` **and** add a `case` in `handl
   both squares are now a field of colour rather than an icon on bare paper. A
   stripe along one edge would have been wrong: that is what a colour *group*
   looks like here, and these are not properties.
-- `src/ui/kit/` holds the shared primitives (`Button`, `Surface`, `Money`, `TitleDeed`, `Tooltip`); build new panels from these rather than restyling divs.
+- `src/ui/kit/` holds the shared primitives (`Button`, `Surface`, `Money`, `TitleDeed`, `Tooltip`, `Switch`, `Segmented`); build new panels from these rather than restyling divs. An on/off setting is a `Switch`, not a button labelled with its state — "Coupé" on a button never said whether it was the state or the action.
+- **The settings panel lives in `ui/hud/settings/`**: a wooden sidebar (`SettingsModal`) and one file per tab — `RoomTab` (online only, and where the panel opens online), `PreferencesTab`, `GroupsTab`, `RulesTab`. Every tab is written in the grammar of `SettingsLayout`: a titled `Section` of `Row`s, each a name, a sentence and one control. Add a setting as a row in the section it belongs to rather than appending a control at the bottom — that is how the old panel became a single undifferentiated scroll. Leaving is not a setting: it sits at the foot of the sidebar.
 - **`Tooltip` is how a control explains itself**, and it wraps the control rather than taking a prop, for three reasons that are easy to undo by accident. A disabled button swallows pointer events outright, so `.tip-anchor` takes them off the child — without it the one control that most needs explaining is the one that cannot be hovered. The slip is positioned against the viewport and portalled to `body`, because the panel it usually hangs off scrolls and a slip clipped by its own list is worse than none; anything that moves the anchor closes it. And it opens on a tap as readily as a hover, since a phone has no hover and the native `title` attribute shows there never.
 - **`TitleDeed` is the one rent register.** The buy panel, the auction and the patrimoine list all print it, with `activeRow` marking the rent the property earns right now. Do not lay out a second copy of those figures — there is exactly one place for them to drift from.
 - **Zero external assets** beyond the two self-hosted webfonts (`@fontsource-variable/*`): every board mark, deck face and die face is canvas-drawn, every sound is synthesized WebAudio in `src/audio/sounds.ts`. Do not add image or audio files.
@@ -182,8 +183,9 @@ matter live there, not in the client.
   one's seat — and two tabs is how anyone tries this before a real game.
 - **The tables cannot be read at all, and nothing writes to one directly.**
   Rooms and rosters are reachable only through `get_room(code)`, and writes
-  only through `create_room`, `claim_seat`, `resume_seat`, `leave_room`,
-  `open_room`, `touch_seat` and `advance_room`. Those functions are
+  only through `create_room`, `claim_seat`, `resume_seat`, `rename_seat`,
+  `leave_room`, `open_room`, `touch_seat`, `set_spectator_voice`,
+  `set_idle_timeout` and `advance_room`. Those functions are
   `SECURITY DEFINER`, take the caller's identity from `auth.uid()` rather than
   from the request body, and require a session. So the room code is a real key
   — there is no way to list other people's games — and passing somebody else's
@@ -202,8 +204,26 @@ matter live there, not in the client.
   speaks for nobody. `online` in the store is what tells them apart, and
   `mayAct` in `selectors.ts` is the only place that decides. Reading the seat
   alone handed spectators the whole table.
-- Creating a room sweeps rooms untouched for 24 hours, so finished games do
-  not accumulate. There is no scheduler to maintain.
+- A room dies when every seated player has been quiet for its idle timeout —
+  `rooms.idle_seconds`, ten minutes unless the host picks 5, 15, 20 or 30 in
+  `HostSettings` (`set_idle_timeout` accepts exactly those). There is no
+  scheduler: `release_empty_rooms` rides `create_room`, the `touch_seat`
+  heartbeat *and* `get_room`, so a room nobody has touched in hours is swept
+  the moment somebody types its code rather than letting them in. Spectator
+  rows do not hold a room open; a table with nobody seated is not a game in
+  play. The sweep uses `for update skip locked`, because every heartbeat runs
+  it and two sweeps waiting on each other is a deadlock that fails the call
+  carrying it.
+- **A deleted room tells nobody, so `touch_seat` answers.** It sweeps *before*
+  recording the beat — a device waking from a long sleep must not revive a
+  room that expired meanwhile — and returns whether the room still exists.
+  `closeGoneRoom` in `roomStore.ts` is the one way out when it does not (and
+  when `get_room` comes back empty for our own room): relay, heartbeat, call
+  and channel down, `OUT_OF_ROOM` state, home screen with `closedNotice`,
+  since toasts are not mounted there.
+- The `revoke ... from anon` at the foot of `schema.sql` names `public` too.
+  Every function is executable by `public`, which `anon` belongs to, so
+  revoking from `anon` alone changed nothing.
 - **A trade is an offer, not a transfer.** `offer-trade` only puts
   `pendingTrade` on the board; nothing moves until the other player sends
   `accept-trade` from their own device. `tradeRoleFor` in `selectors.ts` says
@@ -319,7 +339,13 @@ could assert "they are gone" could take a chair out from under someone.
   and only once play has begun — in the lobby the roster says it better, and
   the slips are not mounted on that screen. The first 1.5 s after subscribing
   is silent, because the server replays everyone already in the room.
-- **The room code lives in the settings panel** (`RoomPanel`) for the whole
+- **Re-tracking presence is not leaving.** A device that updates its payload —
+  microphone on or off, a new name — arrives as a join of the new meta and a
+  leave of the old one under the same key. Announcing those put "X a quitté la
+  partie" then "X a rejoint la partie" on every screen each time anybody
+  touched their microphone. The handlers check `currentPresences`: non-empty
+  means the key never went away.
+- **The room code lives in the settings panel** (`settings/RoomTab`) for the whole
   game, with the invitation link beside it. It is the only way back in, and it
   otherwise disappears the moment the lobby closes.
 
