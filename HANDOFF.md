@@ -34,6 +34,9 @@ Règle d'or : **la logique va dans le moteur** (pur, testable), la 3D et l'HUD n
 - 40 cases Dakar + 32 cartes à effets typés ; 8 pions ; stock banque 32 maisons/12 hôtels
 - 3D : plateau diorama, pions qui sautent case par case, dé 3D qui atterrit sur la bonne face, cartes animées, océan, caméra orbitale
 - HUD complet : achat, enchères, dette, patrimoine (construire/vendre/hypothéquer), échange, journal, toasts, bannière de tour, pluie de billets
+- Abandonner la partie : action moteur `resign` (le joueur sort définitivement ; son argent et la valeur de ses maisons sont partagés entre les joueurs restants, ses titres retournent à la banque ; le tour passe ; la case qu'il était en train de décider part aux enchères ; une dette envers lui devient due à la banque). À deux joueurs, l'autre gagne aussitôt. Refusé pendant une enchère, et pour le joueur qui a une carte ou une dette en cours (`canResign` dans `selectors.ts`). Bouton « Abandonner » dans le dialog de sortie, avec confirmation (Quitter = quitter le salon, le joueur reste assis ; Abandonner = le joueur quitte le jeu). En ligne, un abandon relayé par un appareil qui n'occupe pas ce siège est ignoré.
+- Base de données : un salon dont plus aucun joueur assis ne donne signe de vie pendant son délai (10 min par défaut, 5/15/20/30 au choix de l'hôte, dans Paramètres → Salon ou dans le salon d'attente) est supprimé (`release_empty_rooms`, appelée par `create_room`, `get_room` et le heartbeat `touch_seat`). Les appareils encore connectés sont renvoyés à l'accueil avec l'explication. Schéma appliqué sur le projet Supabase le 23/09/2026.
+- Paramètres refaits : barre latérale (Salon, Réglages, Groupes, Règles) et sections titrées, dans `src/ui/hud/settings/`.
 - Sons WebAudio synthétisés + toggle 🔊
 - `tsc` 0 erreur · `bun run build` OK · **26/26 tests** · testé visuellement dans le navigateur (partie complète : lancer, achat, impôt, rotation des tours, cartes)
 

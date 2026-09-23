@@ -214,6 +214,13 @@ export type Action =
   | { t: "use-jail-card" }
   | { t: "pay-debt" }
   | { t: "declare-bankruptcy" }
+  /**
+   * Walking out on one's own accord, rather than being driven out by a debt.
+   * The estate returns to the bank and the game carries on without them —
+   * legal in any phase but the ones that own the table: an auction, and the
+   * drawer's own unacknowledged card, or the debtor's own unresolved debt.
+   */
+  | { t: "resign"; playerId: number }
   | { t: "offer-trade"; offer: TradeOffer }
   | { t: "accept-trade" }
   | { t: "reject-trade" }

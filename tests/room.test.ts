@@ -41,6 +41,8 @@ function room(state: GameState = table()): RoomRow {
     state,
     version: 12,
     seatOrder: [...CLIENTS],
+    spectatorVoice: false,
+    idleSeconds: 600,
   };
 }
 

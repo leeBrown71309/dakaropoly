@@ -334,5 +334,151 @@ describe("moteur Dakaropoly", () => {
   });
 });
 
+describe("resign", () => {
+  it("removes a waiting player and the game carries on", () => {
+    const s = makeGame(3);
+    const res = applyAction(s, { t: "resign", playerId: 1 });
+    expect(res.state.players[1]?.bankrupt).toBe(true);
+    expect(res.state.current).toBe(0);
+    expect(res.state.phase).toBe("turn-start");
+    const announce = res.events.find((e) => e.t === "announce");
+    if (!announce || announce.t !== "announce") throw new Error("no announce");
+    expect(announce.kind).toBe("bankruptcy");
+    expect(announce.detail).toContain("J1");
+  });
+
+  it("returns the estate to the bank without auctions", () => {
+    let s = makeGame(3);
+    s = forceTile(s, 1, { owner: 1, houses: 2 });
+    s = forceTile(s, 3, { owner: 1, mortgaged: true });
+    const res = applyAction(s, { t: "resign", playerId: 1 });
+    expect(res.state.tiles[1]).toMatchObject({ owner: null, houses: 0, mortgaged: false });
+    expect(res.state.tiles[3]).toMatchObject({ owner: null, mortgaged: false });
+    expect(res.state.houseStock).toBe(HOUSE_STOCK_MAX_TEST + 2);
+    expect(p(res.state, 1).money).toBe(0);
+    expect(res.state.pendingAuctions).toHaveLength(0);
+  });
+
+  it("shares the leaver's cash and building refunds among the others", () => {
+    let s = makeGame(3);
+    // Street 1 is brown: houses cost 50, so two of them refund 2 x 25.
+    s = forceTile(s, 1, { owner: 1, houses: 2 });
+    const res = applyAction(s, { t: "resign", playerId: 1 });
+    const estate = START_MONEY + 50;
+    expect(p(res.state, 0).money).toBe(START_MONEY + estate / 2);
+    expect(p(res.state, 2).money).toBe(START_MONEY + estate / 2);
+    const announce = res.events.find((e) => e.t === "announce");
+    if (!announce || announce.t !== "announce") throw new Error("no announce");
+    expect(announce.title).toBe("Abandon");
+  });
+
+  it("keeps the indivisible remainder at the bank", () => {
+    const s = makeGame(4);
+    const res = applyAction(
+      { ...s, players: s.players.map((pl) => (pl.id === 3 ? { ...pl, money: 1501 } : pl)) },
+      { t: "resign", playerId: 3 },
+    );
+    for (const id of [0, 1, 2]) expect(p(res.state, id).money).toBe(START_MONEY + 500);
+  });
+
+  it("redirects a debt owed to the leaver to the bank", () => {
+    const debt = {
+      ...makeGame(3),
+      phase: "debt" as const,
+      debt: { amount: 5000, creditor: 2, distribute: false, after: "continue" as const, moveSteps: 0 },
+    };
+    const res = applyAction(debt, { t: "resign", playerId: 2 });
+    expect(res.state.debt?.creditor).toBeNull();
+    const broke = applyAction(res.state, { t: "declare-bankruptcy" });
+    // Nobody inherits: the estate is auctioned by the bank, not handed to J2.
+    expect(broke.state.players[2]?.money).toBe(0);
+  });
+
+  it("clears the leaver's jail card", () => {
+    const s = makeGame(3);
+    const res = applyAction(
+      { ...s, players: s.players.map((pl) => (pl.id === 1 ? { ...pl, getOutCards: 1 } : pl)) },
+      { t: "resign", playerId: 1 },
+    );
+    expect(p(res.state, 1).getOutCards).toBe(0);
+  });
+
+  it("passes the turn when the player to move resigns", () => {
+    const res = applyAction(makeGame(3), { t: "resign", playerId: 0 });
+    expect(res.state.current).toBe(1);
+    expect(res.state.phase).toBe("turn-start");
+    expect(res.state.turnCount).toBe(2);
+  });
+
+  it("crowns the last player standing", () => {
+    const res = applyAction(makeGame(2), { t: "resign", playerId: 1 });
+    expect(res.state.phase).toBe("game-over");
+    expect(res.state.winner).toBe(0);
+  });
+
+  it("auctions the tile the leaver was deciding on", () => {
+    const s = place(makeGame(3), 0, 0);
+    const landed = applyAction(s, roll(1, 2));
+    expect(landed.state.phase).toBe("buy-decision");
+    const res = applyAction(landed.state, { t: "resign", playerId: 0 });
+    expect(res.state.phase).toBe("auction");
+    expect(res.state.auction?.pos).toBe(3);
+    expect(res.state.auction?.order).toEqual([1, 2]);
+  });
+
+  it("lapses an offer made by or to the leaver, keeps one between others", () => {
+    const leaverMade = {
+      from: 1,
+      offer: { to: 0, giveMoney: 0, giveProps: [], takeMoney: 10, takeProps: [] },
+    };
+    const lapsed = applyAction({ ...makeGame(3), pendingTrade: leaverMade }, { t: "resign", playerId: 1 });
+    expect(lapsed.state.pendingTrade).toBeNull();
+
+    const leaverReceives = {
+      from: 0,
+      offer: { to: 1, giveMoney: 0, giveProps: [], takeMoney: 10, takeProps: [] },
+    };
+    const answered = applyAction({ ...makeGame(3), pendingTrade: leaverReceives }, { t: "resign", playerId: 1 });
+    expect(answered.state.pendingTrade).toBeNull();
+
+    const betweenOthers = {
+      from: 0,
+      offer: { to: 1, giveMoney: 0, giveProps: [], takeMoney: 0, takeProps: [] },
+    };
+    const kept = applyAction({ ...makeGame(3), pendingTrade: betweenOthers }, { t: "resign", playerId: 2 });
+    expect(kept.state.pendingTrade).not.toBeNull();
+  });
+
+  it("refuses during an auction", () => {
+    const s = place(makeGame(3), 0, 0);
+    const landed = applyAction(s, roll(1, 2));
+    const declined = applyAction(landed.state, { t: "decline" });
+    expect(declined.state.phase).toBe("auction");
+    expect(() => applyAction(declined.state, { t: "resign", playerId: 1 })).toThrow(/ench.re/);
+  });
+
+  it("refuses the drawer's own card and the debtor's own debt, allows the others", () => {
+    const card = { ...makeGame(3), phase: "card" as const, card: { deck: "chance" as const, cardId: "x" } };
+    expect(() => applyAction(card, { t: "resign", playerId: 0 })).toThrow(/carte/);
+    expect(applyAction(card, { t: "resign", playerId: 1 }).state.players[1]?.bankrupt).toBe(true);
+
+    const debt = {
+      ...makeGame(3),
+      phase: "debt" as const,
+      debt: { amount: 100, creditor: null, distribute: false, after: "continue" as const, moveSteps: 0 },
+    };
+    expect(() => applyAction(debt, { t: "resign", playerId: 0 })).toThrow(/dette/);
+    expect(applyAction(debt, { t: "resign", playerId: 1 }).state.players[1]?.bankrupt).toBe(true);
+  });
+
+  it("refuses an already-gone player and a finished game", () => {
+    let s = makeGame(3);
+    s = applyAction(s, { t: "resign", playerId: 1 }).state;
+    expect(() => applyAction(s, { t: "resign", playerId: 1 })).toThrow(/quitt/);
+    const over = { ...s, phase: "game-over" as const };
+    expect(() => applyAction(over, { t: "resign", playerId: 0 })).toThrow();
+  });
+});
+
 const HOUSE_STOCK_MAX_TEST = 32;
 const HOTEL_STOCK_MAX_TEST = 12;
