@@ -1,16 +1,20 @@
 import { motion } from "framer-motion";
 import { useGame } from "../../game/store";
 import { onlineAvailable } from "../../net/supabase";
+import { useRoom } from "../../net/roomStore";
 import { useCompact } from "../useViewport";
 import { PAWN_SHAPES, PLAYER_COLORS } from "../../game/data/pawns";
 import { Card, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { PawnGlyph } from "../icons/PawnGlyph";
+import { Icon } from "../icons/Icon";
 
 /** Title screen, set like a printed travel poster for the city. */
 export function Home() {
   const openSetup = useGame((s) => s.openSetup);
   const openOnline = useGame((s) => s.openOnline);
+  const closedNotice = useRoom((s) => s.closedNotice);
+  const dismissClosedNotice = useRoom((s) => s.dismissClosedNotice);
   const compact = useCompact();
 
   return (
@@ -31,6 +35,25 @@ export function Home() {
           transition={{ type: "spring", stiffness: 160, damping: 20 }}
           className={`relative mx-4 max-w-[calc(100%-2rem)] ${compact ? "w-[400px]" : "w-[440px]"}`}
         >
+          {/*
+            * A room that closed while this device was in it sends the player
+            * here, and the slips that narrate the game are not mounted on this
+            * screen — without this, the board would simply vanish.
+            */}
+          {closedNotice && (
+            <button
+              type="button"
+              onClick={dismissClosedNotice}
+              className={`mb-2 flex w-full items-start gap-2 rounded-[3px] text-left shadow-lg ${
+                compact ? "px-2.5 py-1.5" : "px-3 py-2"
+              }`}
+              style={{ backgroundColor: "#8E4526", color: "#FBEDEB" }}
+            >
+              <Icon name="warning" size={15} className="mt-px shrink-0" />
+              <span className={`leading-snug ${compact ? "text-[11px]" : "text-[12px]"}`}>{closedNotice}</span>
+              <Icon name="close" size={13} className="ml-auto mt-px shrink-0 opacity-70" />
+            </button>
+          )}
           <Card className={`text-center ${compact ? "px-6 pb-5 pt-6" : "px-9 pb-8 pt-9"}`}>
             {/* Printed double keyline */}
             <span

@@ -14,6 +14,8 @@ export interface RoomRow {
   seatOrder: string[];
   /** Whether the host lets spectators use a microphone. */
   spectatorVoice: boolean;
+  /** How long the room outlives its last seated player, in seconds. */
+  idleSeconds: number;
 }
 
 export interface Seat {
@@ -71,6 +73,16 @@ export function normaliseCode(input: string): string {
 
 export const CODE_SIZE = CODE_LENGTH;
 
+/**
+ * How long a room waits, once nobody is seated at it any more, before it is
+ * deleted — the choices the host is offered, in minutes. The database accepts
+ * exactly these and nothing else (`set_idle_timeout`).
+ */
+export const IDLE_CHOICES_MINUTES = [5, 10, 15, 20, 30] as const;
+
+/** What a room gets until its host says otherwise. Mirrors the column default. */
+export const DEFAULT_IDLE_SECONDS = 600;
+
 /** The link that drops someone straight onto the join form, code filled in. */
 export function inviteLink(code: string): string {
   return `${location.origin}${location.pathname}?s=${code}`;
@@ -85,6 +97,7 @@ interface RawRoom {
   version: number;
   seat_order: string[] | null;
   spectator_voice: boolean | null;
+  idle_seconds: number | null;
 }
 
 interface RawSeat {
@@ -105,6 +118,7 @@ const toRoom = (r: RawRoom): RoomRow => ({
   version: r.version,
   seatOrder: r.seat_order ?? [],
   spectatorVoice: r.spectator_voice === true,
+  idleSeconds: r.idle_seconds ?? DEFAULT_IDLE_SECONDS,
 });
 
 const toSeat = (r: RawSeat): Seat => ({
@@ -142,8 +156,9 @@ export async function fetchRoomAndSeats(
 }
 
 /**
- * Creates a room and seats its host. Creating one also sweeps rooms nobody
- * has touched in a day, so finished games do not pile up for ever.
+ * Creates a room and seats its host. Creating one also releases every room
+ * whose last seated player has been quiet for longer than that room's idle
+ * timeout, so abandoned evenings do not pile up for ever.
  */
 export async function createRoom(clientId: string, name: string, pawn: number): Promise<string> {
   const sb = supabase();
@@ -193,9 +208,15 @@ export async function claimSeat(
  * Reports this device as still there. A seat goes up for grabs when nothing
  * has been heard from it, so silence has to mean something: a tab that is
  * closed, a phone that is off, a player who walked away.
+ *
+ * Answers whether the room still exists. A room that expired while this
+ * device slept is deleted rather than revived by it, and nothing else would
+ * ever tell the device so: a deleted room sends no message.
  */
-export async function touchSeat(code: string): Promise<void> {
-  await supabase().rpc("touch_seat", { p_code: code });
+export async function touchSeat(code: string): Promise<boolean> {
+  const { data, error } = await supabase().rpc("touch_seat", { p_code: code });
+  if (error) throw new Error(error.message);
+  return data === true;
 }
 
 /**
@@ -249,16 +270,6 @@ export function seatOffers(room: RoomRow, seats: Seat[], clientId: string): Seat
 }
 
 /**
- * Gives up this device's chair, and the room with it when it was an empty
- * lobby this device was hosting.
- *
- * This used to delete straight from the table, and quietly deleted nothing:
- * row level security refused it and PostgREST answered 204 with no rows
- * touched, so leaving looked like it had worked while the seat stayed held.
- * Like every other write here, it now goes through a function that takes the
- * identity from the session rather than from the request.
- */
-/**
  * The host's switch for the spectators' microphones. Checked in the function
  * rather than in the panel that draws it: the panel only knows what to show.
  */
@@ -273,6 +284,31 @@ export async function setSpectatorVoice(code: string, allowed: boolean): Promise
   }
 }
 
+/**
+ * The host's choice of how long the room survives once nobody is seated at
+ * it. Like the microphone switch, the function is what enforces who may.
+ */
+export async function setIdleTimeout(code: string, seconds: number): Promise<void> {
+  const { error } = await supabase().rpc("set_idle_timeout", {
+    p_code: code,
+    p_seconds: seconds,
+  });
+  if (error) {
+    if (error.code === "42501") throw new Error("Seul l'hôte peut changer ce réglage");
+    throw new Error(error.message);
+  }
+}
+
+/**
+ * Gives up this device's chair, and the room with it when it was an empty
+ * lobby this device was hosting.
+ *
+ * This used to delete straight from the table, and quietly deleted nothing:
+ * row level security refused it and PostgREST answered 204 with no rows
+ * touched, so leaving looked like it had worked while the seat stayed held.
+ * Like every other write here, it now goes through a function that takes the
+ * identity from the session rather than from the request.
+ */
 export async function leaveRoom(code: string): Promise<void> {
   const { error } = await supabase().rpc("leave_room", { p_code: code });
   if (error) throw new Error(error.message);

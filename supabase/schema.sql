@@ -27,9 +27,18 @@ create table if not exists public.rooms (
   -- the most the voice mesh carries comfortably and a room holds any number
   -- of spectators on top; the host decides, and it is off until they say so.
   spectator_voice boolean not null default false,
+  -- How long the room outlives its last seated player, in seconds. The host
+  -- picks it; `set_idle_timeout` only accepts the choices the interface
+  -- offers, and the check is the floor for anything written by hand.
+  idle_seconds integer not null default 600 check (idle_seconds between 30 and 3600),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Rooms created before the setting existed.
+alter table public.rooms
+  add column if not exists idle_seconds integer not null default 600
+  check (idle_seconds between 30 and 3600);
 
 create table if not exists public.room_players (
   room_code text not null references public.rooms(code) on delete cascade,
@@ -75,39 +84,91 @@ alter table public.room_players enable row level security;
 -- `SEAT_TIMEOUT` is 75 seconds, written inline below. Clients report in every
 -- 20 seconds through `touch_seat`, so a chair survives three missed beats —
 -- a tunnel, a locked phone, a reload — before anyone else is offered it.
+-- A room itself outlives its last seated player by `idle_seconds` — ten
+-- minutes unless the host chose otherwise. Past that, `release_empty_rooms`
+-- deletes it and the cascade takes the roster along.
 
--- The only way to see a room. Demands the code, which is what makes the code
--- a key rather than a label. `absent` is computed here, not on a device.
-create or replace function public.get_room(p_code text)
-returns jsonb
+-- A room lives while somebody sits at it. "Sitting at it" is the same fact
+-- the chair logic already trusts: a row whose `last_seen` is fresh. A room
+-- where every seated player has gone quiet for its idle timeout — everyone
+-- left for the evening, everyone's phone asleep — is nobody's game any more:
+-- it is deleted, and the cascade takes the roster with it. Spectator rows do
+-- not hold a room open: a table with nobody seated is not a game in play.
+-- The `updated_at` guard protects the moment between a room being created
+-- and its host claiming the first seat, and judges a room with no rows at
+-- all by its last write. The fixed 30-second bound is the shortest timeout
+-- the column allows, and lets the index on `updated_at` narrow the scan.
+--
+-- Every heartbeat from every device runs this, so two of them regularly run
+-- it at the same moment. `skip locked` lets each one pass over the rooms the
+-- other is already deleting instead of queueing behind it — waiting there is
+-- how two sweeps end up deadlocked, and a deadlock would fail the read or the
+-- heartbeat that carried the sweep.
+create or replace function public.release_empty_rooms()
+returns void
 language sql
-stable
 security definer
 set search_path = public
 as $$
-  select case when r.code is null then null else jsonb_build_object(
-    'code', r.code,
-    'status', r.status,
-    'host_id', r.host_id,
-    'seed', r.seed,
-    'state', r.state,
-    'version', r.version,
-    'seat_order', r.seat_order,
-    'spectator_voice', r.spectator_voice,
-    'seats', coalesce((
-      select jsonb_agg(jsonb_build_object(
-        'client_id', p.client_id, 'seat', p.seat, 'name', p.name,
-        'pawn', p.pawn, 'avatar', p.avatar,
-        'absent', p.last_seen < now() - interval '75 seconds'
-      ) order by p.joined_at)
-      from public.room_players p where p.room_code = r.code
-    ), '[]'::jsonb)
-  ) end
-  from public.rooms r where r.code = p_code;
+  delete from public.rooms
+   where code in (
+     select r.code from public.rooms r
+      where r.updated_at < now() - interval '30 seconds'
+        and r.updated_at < now() - make_interval(secs => r.idle_seconds)
+        and not exists (
+          select 1 from public.room_players p
+           where p.room_code = r.code
+             and p.seat is not null
+             and p.last_seen > now() - make_interval(secs => r.idle_seconds)
+        )
+      for update skip locked
+   );
 $$;
 
--- Creating a room also sweeps rooms nobody has touched in a day, so finished
--- games do not pile up. There is no scheduler to maintain.
+-- The only way to see a room. Demands the code, which is what makes the code
+-- a key rather than a label. `absent` is computed here, not on a device.
+--
+-- It sweeps before it looks. Otherwise the sweep would only run when some
+-- device somewhere wrote something, and a room whose players all left an
+-- hour ago on a quiet evening would still open for whoever typed its code —
+-- which is exactly what expiring it is meant to prevent.
+create or replace function public.get_room(p_code text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.release_empty_rooms();
+
+  return (
+    select jsonb_build_object(
+      'code', r.code,
+      'status', r.status,
+      'host_id', r.host_id,
+      'seed', r.seed,
+      'state', r.state,
+      'version', r.version,
+      'seat_order', r.seat_order,
+      'spectator_voice', r.spectator_voice,
+      'idle_seconds', r.idle_seconds,
+      'seats', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'client_id', p.client_id, 'seat', p.seat, 'name', p.name,
+          'pawn', p.pawn, 'avatar', p.avatar,
+          'absent', p.last_seen < now() - interval '75 seconds'
+        ) order by p.joined_at)
+        from public.room_players p where p.room_code = r.code
+      ), '[]'::jsonb)
+    )
+    from public.rooms r where r.code = p_code
+  );
+end;
+$$;
+
+-- Creating a room and seats its host. It also releases every room nobody has
+-- been seated in for its idle timeout, so abandoned evenings do not pile up —
+-- there is no scheduler to maintain, so the sweep rides the access paths.
 create or replace function public.create_room(p_code text)
 returns void
 language plpgsql
@@ -121,8 +182,7 @@ begin
     raise exception 'Identité manquante' using errcode = '28000';
   end if;
 
-  -- Cascades to room_players.
-  delete from public.rooms where updated_at < now() - interval '24 hours';
+  perform public.release_empty_rooms();
 
   insert into public.rooms (code, host_id) values (p_code, me);
 end;
@@ -283,16 +343,61 @@ begin
 end;
 $$;
 
--- Still here. Called on a timer while a device is in a room.
-create or replace function public.touch_seat(p_code text)
+-- How long the room waits for somebody to sit back down before it closes.
+-- The host's call, from the choices the interface offers — a table that
+-- takes long breaks wants more than one that plays straight through.
+create or replace function public.set_idle_timeout(p_code text, p_seconds integer)
 returns void
-language sql
+language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Identité manquante' using errcode = '28000';
+  end if;
+  if p_seconds is null or p_seconds not in (300, 600, 900, 1200, 1800) then
+    raise exception 'Durée non proposée' using errcode = '22023';
+  end if;
+
+  update public.rooms
+     set idle_seconds = p_seconds, updated_at = now()
+   where code = p_code and host_id = me;
+
+  if not found then
+    raise exception 'Seul l''hôte peut changer ce réglage' using errcode = '42501';
+  end if;
+end;
+$$;
+
+-- Still here. Called on a timer while a device is in a room — every twenty
+-- seconds — so the empty-room release rides it continuously without a
+-- scheduler: a room whose last seated player went quiet long enough ago is
+-- swept by the very next heartbeat from anywhere.
+--
+-- The sweep runs *before* the beat is recorded. A device waking from a long
+-- sleep must not revive a room that expired while it was away; it learns
+-- instead, from the answer, that there is no room left to report to — which
+-- is the only way a device can find out, since nobody tells a deleted room's
+-- players anything.
+drop function if exists public.touch_seat(text);
+create function public.touch_seat(p_code text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.release_empty_rooms();
+
   update public.room_players
      set last_seen = now()
    where room_code = p_code and client_id = auth.uid();
+
+  return exists (select 1 from public.rooms where code = p_code);
+end;
 $$;
 
 -- Giving the chair up, and the room with it when it was an empty lobby this
@@ -388,14 +493,33 @@ $$;
 -- Every one of these refuses an anonymous caller on its own terms already;
 -- saying so at the grant keeps the rule in one readable place. Anonymous
 -- sign-in must be enabled in the project (Authentication -> Providers):
--- without an identity there is nothing to check a seat against.
-revoke execute on function public.get_room(text) from anon;
-revoke execute on function public.create_room(text) from anon;
-revoke execute on function public.claim_seat(text, uuid, text, smallint) from anon;
-revoke execute on function public.resume_seat(text, smallint) from anon;
-revoke execute on function public.rename_seat(text, text) from anon;
-revoke execute on function public.touch_seat(text) from anon;
-revoke execute on function public.set_spectator_voice(text, boolean) from anon;
-revoke execute on function public.leave_room(text) from anon;
-revoke execute on function public.open_room(text, bigint, jsonb, jsonb) from anon;
-revoke execute on function public.advance_room(text, jsonb, integer) from anon;
+-- without an identity there is nothing to check a seat against. (Signing in
+-- anonymously makes a device `authenticated`; `anon` is a request carrying
+-- no session at all.)
+--
+-- The revoke names `public` as well as `anon`: every new function is
+-- executable by `public`, which `anon` belongs to, so revoking from `anon`
+-- alone changed nothing — six of these stayed callable without a session.
+do $$
+declare
+  fn text;
+begin
+  foreach fn in array array[
+    'public.get_room(text)',
+    'public.release_empty_rooms()',
+    'public.create_room(text)',
+    'public.claim_seat(text, uuid, text, smallint)',
+    'public.resume_seat(text, smallint)',
+    'public.rename_seat(text, text)',
+    'public.touch_seat(text)',
+    'public.set_spectator_voice(text, boolean)',
+    'public.set_idle_timeout(text, integer)',
+    'public.leave_room(text)',
+    'public.open_room(text, bigint, jsonb, jsonb)',
+    'public.advance_room(text, jsonb, integer)'
+  ] loop
+    execute format('revoke execute on function %s from public, anon', fn);
+    execute format('grant execute on function %s to authenticated', fn);
+  end loop;
+end;
+$$;
