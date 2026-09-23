@@ -11,7 +11,7 @@ import { TradeModal } from "../hud/TradeModal";
 import { TradeOffer } from "../hud/TradeOffer";
 import { CardModal } from "../hud/CardModal";
 import { Announcement } from "../hud/Announcement";
-import { SettingsModal } from "../hud/SettingsModal";
+import { SettingsModal } from "../hud/settings/SettingsModal";
 import { ConfirmQuit } from "../hud/ConfirmQuit";
 import { Toasts } from "../hud/Toasts";
 import { ViewControls } from "../hud/ViewControls";
