@@ -1,27 +1,58 @@
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../../game/store";
+import { canResign } from "../../game/selectors";
 import { useCompact } from "../useViewport";
 import { quitToHome } from "../leaveGame";
-import { useIsOnline, useIsSpectator } from "../useTurn";
+import { useIsOnline, useIsSpectator, useMySeat } from "../useTurn";
 import { useRoom } from "../../net/roomStore";
 import { formatCode } from "../../net/room";
 import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
+import { Tooltip } from "../kit/Tooltip";
 import { Money } from "../kit/Money";
 import { Icon } from "../icons/Icon";
 
 /**
  * Leaving throws the saved game away, and a Monopoly evening is long — so the
  * cost is spelled out before the door opens.
+ *
+ * Two ways out, and they are not the same thing. **Quitter** takes this device
+ * out of the room: the player stays seated in the game, and their chair goes
+ * up for grabs once they stop reporting in. **Abandonner** is the rule action:
+ * the player themselves walks out of the game for good — cash shared among
+ * the others, titles back to the bank, token off the board — and the game
+ * carries on without them. It cannot be undone, so it asks twice.
  */
 export function ConfirmQuit() {
   const open = useGame((s) => s.confirmQuitOpen);
   const cancelQuit = useGame((s) => s.cancelQuit);
+  const dispatch = useGame((s) => s.dispatch);
   const game = useGame((s) => s.game);
   const compact = useCompact();
   const online = useIsOnline();
   const spectating = useIsSpectator();
+  const mySeat = useMySeat();
   const code = useRoom((s) => s.code);
+
+  // Abandoning is final, so the first press only arms it; the dialog closing
+  // disarms it, so the next visit starts from the safe side again.
+  const [arming, setArming] = useState(false);
+  useEffect(() => {
+    if (!open) setArming(false);
+  }, [open]);
+
+  const me = game !== null && mySeat !== null ? game.players[mySeat] : undefined;
+  const resignable =
+    me !== undefined && !me.bankrupt && game !== null && game.phase !== "game-over";
+  // The engine's own refusal, said before the click rather than after it.
+  const resignBlock = game !== null && mySeat !== null ? canResign(game, mySeat) : null;
+  const resign = (): void => {
+    if (!game || mySeat === null) return;
+    dispatch({ t: "resign", playerId: mySeat });
+    setArming(false);
+    cancelQuit();
+  };
 
   return (
     <AnimatePresence>
@@ -135,6 +166,53 @@ export function ConfirmQuit() {
                     Quitter
                   </Button>
                 </div>
+
+                {resignable && me && !arming && (
+                  <Tooltip
+                    className="mt-2 block w-full"
+                    title={resignBlock?.title ?? (online ? "Abandonner la partie" : `Abandonner — ${me.name}`)}
+                    detail={
+                      resignBlock?.detail ??
+                      (online
+                        ? "Vous sortez du jeu pour de bon : votre argent et vos maisons sont partagés entre les autres joueurs, vos titres retournent à la banque. Vous pourrez rester regarder."
+                        : `${me.name} sort du jeu pour de bon : son argent et ses maisons sont partagés entre les autres joueurs, ses titres retournent à la banque.`)
+                    }
+                  >
+                    <Button
+                      face="slate"
+                      size={compact ? "sm" : "md"}
+                      icon="flag"
+                      block
+                      disabled={!!resignBlock}
+                      onClick={() => setArming(true)}
+                    >
+                      {compact ? "Abandonner" : "Abandonner la partie"}
+                    </Button>
+                  </Tooltip>
+                )}
+
+                {resignable && me && arming && (
+                  <div
+                    className={`mt-2 rounded-[3px] ${compact ? "px-2 py-1.5" : "px-3 py-2.5"}`}
+                    style={{ background: "rgba(142,69,38,.08)", boxShadow: "inset 0 0 0 1px rgba(142,69,38,.4)" }}
+                  >
+                    <p className={`leading-snug text-ink-700 ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
+                      <b className="text-clay-700">
+                        {online ? "Abandonner pour de bon ?" : `${me.name} abandonne pour de bon ?`}
+                      </b>{" "}
+                      <Money amount={me.money} className="font-semibold" /> et la valeur des maisons seront
+                      partagés entre les autres joueurs. Il n'y a pas de retour en arrière.
+                    </p>
+                    <div className={`flex gap-2 ${compact ? "mt-1.5" : "mt-2"}`}>
+                      <Button face="bone" size="sm" block onClick={() => setArming(false)}>
+                        Annuler
+                      </Button>
+                      <Button face="clay" size="sm" icon="flag" block onClick={resign}>
+                        Oui, abandonner
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </Card>
           </motion.div>

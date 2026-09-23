@@ -876,7 +876,13 @@ async function handle(
       // rather than drop the action and drift: a dropped *state-changing*
       // action leaves this version counter agreeing while the board under
       // it quietly diverges.
-      if (msg.action.t === "rename" && seatOf(get().seatOrder, get().seats, msg.by) !== msg.action.playerId) {
+      // Walking out of the game is held to the same rule: only the device in
+      // the chair can resign it, or one stale screen could eliminate somebody
+      // who never asked to leave.
+      if (
+        (msg.action.t === "rename" || msg.action.t === "resign") &&
+        seatOf(get().seatOrder, get().seats, msg.by) !== msg.action.playerId
+      ) {
         await resync(code, clientId, set);
         return;
       }

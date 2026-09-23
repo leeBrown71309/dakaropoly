@@ -260,6 +260,48 @@ export function ownedPositions(s: GameState, playerId: number): number[] {
 }
 
 /**
+ * Whether a player may walk out of the game right now.
+ *
+ * Legal in almost any phase, including somebody else's turn — except the
+ * ones that own the table. An auction has a rotating queue and a committed
+ * standing bid, and pulling a bidder out of either corrupts it. An
+ * unacknowledged card and an unpaid debt own the turn of the player to move
+ * until they are settled; for everyone else they are no obstacle.
+ *
+ * The engine refuses with the same sentence the interface shows, so the two
+ * cannot disagree about why.
+ */
+export function canResign(s: GameState, playerId: number): Blocker | null {
+  if (s.phase === "game-over") {
+    return refuse("Partie terminée", "La partie est déjà terminée : il n'y a plus rien à abandonner.");
+  }
+  const player = s.players[playerId];
+  if (!player) return refuse("Joueur inconnu", "Ce joueur n'existe pas dans cette partie.");
+  if (player.bankrupt) {
+    return refuse("Déjà sorti", `${player.name} a déjà quitté la partie.`);
+  }
+  if (s.phase === "auction") {
+    return refuse(
+      "Enchères en cours",
+      "Attendez la fin de l'enchère pour abandonner : la vente doit se terminer avant que quiconque quitte la table.",
+    );
+  }
+  if (playerId === s.current && s.phase === "card") {
+    return refuse(
+      "Carte en cours",
+      "Acquittez la carte tirée avant d'abandonner : la partie est en pause jusqu'à sa confirmation.",
+    );
+  }
+  if (playerId === s.current && s.phase === "debt") {
+    return refuse(
+      "Dette à régler",
+      "Réglez d'abord votre dette : payez la somme due ou déclarez faillite, puis abandonnez.",
+    );
+  }
+  return null;
+}
+
+/**
  * The one player entitled to act right now, or `null` when the game is over.
  *
  * It is *not* always `s.current`: during an auction the floor belongs to the
