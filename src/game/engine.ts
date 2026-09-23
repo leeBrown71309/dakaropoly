@@ -11,7 +11,7 @@ import type {
 import { BOARD, GROUP_MEMBERS, STATION_POS, UTILITY_POS, tileAt } from "./data/board";
 import { CARDS_BY_ID, DECK_IDS } from "./data/cards";
 import { PLAYER_COLORS } from "./data/pawns";
-import { mortgageValue, ownedPositions, rentFor } from "./selectors";
+import { canResign, mortgageValue, ownedPositions, rentFor } from "./selectors";
 import { NAME_MAX } from "./types";
 
 export const START_MONEY = 1500;
@@ -459,7 +459,25 @@ function afterAuction(s: GameState, events: GameEvent[]): void {
   finishResolution(s, events);
 }
 
-function transferAssets(s: GameState, events: GameEvent[], debtor: Player, creditorId: number | null): void {
+/**
+ * How a player leaves the table: driven out by a debt, or walking out on
+ * their own. The estate moves the same way; only what the table is told
+ * differs, because "Faillite" over somebody who simply stood up is untrue.
+ */
+type Departure = "bankruptcy" | "resign";
+
+const DEPARTURE_TITLE: Record<Departure, string> = {
+  bankruptcy: "Faillite",
+  resign: "Abandon",
+};
+
+function transferAssets(
+  s: GameState,
+  events: GameEvent[],
+  debtor: Player,
+  creditorId: number | null,
+  departure: Departure = "bankruptcy",
+): void {
   const creditor = creditorId !== null ? (s.players[creditorId] as Player) : null;
   if (creditor && debtor.money > 0) {
     creditor.money += debtor.money;
@@ -515,11 +533,54 @@ function transferAssets(s: GameState, events: GameEvent[], debtor: Player, credi
   // beside the name of somebody who had left the table.
   debtor.inJail = false;
   debtor.jailAttempts = 0;
+  // Same reasoning for the "sortie de prison" key beside the name: the card
+  // leaves circulation with its holder, as a spent one does.
+  debtor.getOutCards = 0;
   events.push({
     t: "announce",
     kind: "bankruptcy",
-    title: "Faillite",
-    detail: `${debtor.name} quitte la partie`,
+    title: DEPARTURE_TITLE[departure],
+    detail:
+      departure === "resign" ? `${debtor.name} abandonne la partie` : `${debtor.name} quitte la partie`,
+  });
+}
+
+/**
+ * What a leaver's estate is worth in cash: their notes, plus their buildings
+ * sold back to the bank at half price — the same refund a bankruptcy pays a
+ * creditor. Titles are not counted: they go back on the market instead.
+ */
+function estateCash(s: GameState, player: Player): number {
+  let cash = Math.max(player.money, 0);
+  BOARD.forEach((tile, pos) => {
+    const st = s.tiles[pos] as TileState;
+    if (st.owner === player.id && tile.kind === "street" && st.houses > 0) {
+      cash += st.houses * Math.floor((tile.houseCost ?? 0) / 2);
+    }
+  });
+  return cash;
+}
+
+/**
+ * Shares a leaver's cash among everyone still at the table. The remainder
+ * that does not divide evenly stays with the bank: splitting a franc is not
+ * something the notes on this board can do.
+ */
+function shareEstate(s: GameState, events: GameEvent[], leaver: Player, cash: number): void {
+  const heirs = activePlayers(s).filter((p) => p.id !== leaver.id);
+  const share = heirs.length > 0 ? Math.floor(cash / heirs.length) : 0;
+  if (share <= 0) return;
+  for (const heir of heirs) {
+    heir.money += share;
+    events.push({ t: "money", player: heir.id, amount: share });
+  }
+  events.push({
+    t: "toast",
+    text:
+      heirs.length === 1
+        ? `${(heirs[0] as Player).name} reçoit les ${share} F de ${leaver.name}`
+        : `Les ${cash} F de ${leaver.name} sont partagés : ${share} F pour chacun des ${heirs.length} joueurs`,
+    tone: "good",
   });
 }
 
@@ -972,6 +1033,66 @@ export function applyAction(prev: GameState, action: Action): ApplyResult {
         break;
       }
       endTurn(s, events);
+      break;
+    }
+    case "resign": {
+      const refused = canResign(s, action.playerId);
+      if (refused) throw new Error(refused.detail);
+      const target = s.players[action.playerId] as Player;
+      // An offer made by the leaver, or addressed to them, dies with them —
+      // a chair that empties mid-offer cannot answer it. An offer between two
+      // players still at the table survives.
+      const pending = s.pendingTrade;
+      if (pending && (pending.from === target.id || pending.offer.to === target.id)) {
+        s.pendingTrade = null;
+        const from = s.players[pending.from] as Player | undefined;
+        const to = s.players[pending.offer.to] as Player | undefined;
+        events.push({
+          t: "toast",
+          text: `Offre de ${from?.name ?? "?"} à ${to?.name ?? "?"} expirée`,
+          tone: "info",
+        });
+      }
+      // Somebody in debt to the leaver still owes the money — the rent was
+      // earned — but there is nobody left to receive it. It is owed to the
+      // bank instead; otherwise paying it, or going bankrupt over it, would
+      // hand cash and titles to a chair that is empty.
+      if (s.debt && s.debt.creditor === target.id) {
+        s.debt.creditor = null;
+        events.push({
+          t: "toast",
+          text: `La dette envers ${target.name} est désormais due à la banque`,
+          tone: "info",
+        });
+      }
+      // What the leaver leaves is shared among the players still at the
+      // table: their notes, and their buildings sold back at half price. The
+      // titles themselves go back on the market, unmortgaged, for whoever
+      // lands on them next — handing out streets would crown whoever drew
+      // the lucky colour. And no estate auctions, unlike a bankruptcy: those
+      // belong to the debtor's own turn, and an abandonment can land in the
+      // middle of somebody else's.
+      const cash = estateCash(s, target);
+      transferAssets(s, events, target, null, "resign");
+      shareEstate(s, events, target, cash);
+      const active = activePlayers(s);
+      if (active.length <= 1) {
+        s.phase = "game-over";
+        s.winner = active.length === 1 ? ((active[0] as Player).id as number) : null;
+        if (s.winner !== null) events.push({ t: "winner", player: s.winner });
+        break;
+      }
+      if (target.id === s.current) {
+        if (s.phase === "buy-decision") {
+          // The tile they were deciding on is offered to the table, the way a
+          // decline would have: the rule stands even when the decider leaves.
+          const pos = s.buyTile as number;
+          s.buyTile = null;
+          startAuction(s, events, pos);
+        } else {
+          endTurn(s, events);
+        }
+      }
       break;
     }
     case "offer-trade": {

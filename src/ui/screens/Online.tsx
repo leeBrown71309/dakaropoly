@@ -12,6 +12,7 @@ import { Card, Label, BrassRule } from "../kit/Surface";
 import { Button, Fitting } from "../kit/Button";
 import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { HostSettings } from "../hud/settings/HostSettings";
 
 const MAX_PLAYERS = 8;
 
@@ -357,6 +358,11 @@ function Lobby({ compact }: { compact: boolean }) {
             />
           </>
         )}
+      </Card>
+
+      {/* Set before anyone arrives, not only once the game is under way. */}
+      <Card className={`mt-2 ${compact ? "p-3" : "p-4"}`}>
+        <HostSettings />
       </Card>
 
       <div className={`flex items-center gap-2 ${compact ? "mt-3" : "mt-5"}`}>

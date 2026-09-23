@@ -381,18 +381,31 @@
     cursor: pointer;
   }
 
+  /* The part of the channel behind the thumb is inlaid with brass, so where a
+     slider stands reads at a glance. `--fill` is set inline, as a percentage;
+     without it the channel is plain paper, as it always was. */
   .range::-webkit-slider-runnable-track {
     height: 6px;
     border-radius: 3px;
-    background: linear-gradient(180deg, #d8c9a8, #efe6d2);
+    background:
+      linear-gradient(90deg, rgba(205, 161, 88, 0.95) 0 var(--fill, 0%), transparent var(--fill, 0%)),
+      linear-gradient(180deg, #d8c9a8, #efe6d2);
     box-shadow: inset 0 1px 3px rgba(80, 60, 30, 0.45);
   }
 
   .range::-moz-range-track {
     height: 6px;
     border-radius: 3px;
-    background: linear-gradient(180deg, #d8c9a8, #efe6d2);
+    background:
+      linear-gradient(90deg, rgba(205, 161, 88, 0.95) 0 var(--fill, 0%), transparent var(--fill, 0%)),
+      linear-gradient(180deg, #d8c9a8, #efe6d2);
     box-shadow: inset 0 1px 3px rgba(80, 60, 30, 0.45);
+  }
+
+  .range:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+    filter: grayscale(0.6);
   }
 
   .range::-webkit-slider-thumb {

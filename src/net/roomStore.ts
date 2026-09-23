@@ -21,10 +21,12 @@ import {
 import {
   claimSeat,
   createRoom,
+  formatCode,
   fetchRoomAndSeats,
   leaveRoom,
   pushSnapshot,
   renameSeat,
+  setIdleTimeout,
   setSpectatorVoice,
   resumeSeat,
   seatOffers,
@@ -32,6 +34,7 @@ import {
   seatedInOrder,
   startRoom,
   touchSeat,
+  DEFAULT_IDLE_SECONDS,
   type RoomStatus,
   type Seat,
   type SeatOffer,
@@ -132,6 +135,20 @@ interface RoomState {
   reconnecting: boolean;
   /** Whether the host lets the people standing behind the table speak. */
   spectatorVoice: boolean;
+  /** How long the room outlives its last seated player, in seconds. */
+  idleSeconds: number;
+  /**
+   * A host setting is on its way to the database. The controls wait for it:
+   * a second tap on a switch whose first has not landed yet is how a toggle
+   * ends up exactly where it started.
+   */
+  hostBusy: boolean;
+  /**
+   * Why this device was sent back to the title screen, when it was the room
+   * that went rather than the player. Toasts are only mounted over the board,
+   * so the home screen carries this one itself.
+   */
+  closedNotice: string | null;
   /**
    * This device came in through the spectator door and means to stay there.
    *
@@ -160,6 +177,9 @@ interface RoomState {
   restore: () => Promise<void>;
   /** The host's switch for the spectators' microphones. */
   allowSpectatorVoice: (allowed: boolean) => Promise<void>;
+  /** The host's choice of how long an empty room survives, in seconds. */
+  setIdleTimeout: (seconds: number) => Promise<void>;
+  dismissClosedNotice: () => void;
   /** Says something to the room. */
   say: (text: string) => void;
   markRead: () => void;
@@ -174,6 +194,31 @@ const HEARTBEAT_MS = 20_000;
 
 const message = (e: unknown): string =>
   e instanceof Error ? e.message : "Quelque chose n'a pas marché";
+
+/**
+ * Everything that describes being in a room, emptied. Shared by leaving on
+ * purpose and by finding the room gone, which must leave the same nothing
+ * behind — a field one of them forgot is a field the next room inherits.
+ */
+const OUT_OF_ROOM = {
+  code: null,
+  clientId: null,
+  hostId: null,
+  status: "lobby",
+  seats: [],
+  seatOrder: [],
+  present: [],
+  myName: null,
+  watchers: [],
+  version: 0,
+  pending: null,
+  spectatorVoice: false,
+  idleSeconds: DEFAULT_IDLE_SECONDS,
+  hostBusy: false,
+  watching: false,
+  messages: [],
+  unread: 0,
+} satisfies Partial<RoomState>;
 
 /**
  * Stands in for the relay between a reload and the channel coming back.
@@ -205,25 +250,54 @@ export const useRoom = create<RoomState>()(
       pending: null,
       reconnecting: false,
       spectatorVoice: false,
+      idleSeconds: DEFAULT_IDLE_SECONDS,
+      hostBusy: false,
+      closedNotice: null,
       watching: false,
       messages: [],
       unread: 0,
 
       clearError: () => set({ error: null }),
       markRead: () => set({ unread: 0 }),
+      dismissClosedNotice: () => set({ closedNotice: null }),
 
       allowSpectatorVoice: async (allowed) => {
         const code = get().code;
-        if (!code) return;
+        if (!code || get().hostBusy) return;
+        const before = get().spectatorVoice;
+        // Shown at once and taken back on refusal: waiting a round trip for a
+        // switch to move reads as a switch that does not work.
+        set({ spectatorVoice: allowed, hostBusy: true });
         try {
           await setSpectatorVoice(code, allowed);
-          set({ spectatorVoice: allowed });
           // Everyone re-reads the room, which is where the switch lives, so a
           // spectator who may no longer speak is dropped by every device.
           channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
           await refreshSeats(code, set);
         } catch (e) {
-          set({ error: message(e) });
+          // Mid-game `error` has no banner to land in, and a switch that
+          // flips back without a word looks broken rather than refused.
+          set({ spectatorVoice: before, error: message(e) });
+          pushToast(message(e), "bad");
+        } finally {
+          set({ hostBusy: false });
+        }
+      },
+
+      setIdleTimeout: async (seconds) => {
+        const code = get().code;
+        if (!code || get().hostBusy || seconds === get().idleSeconds) return;
+        const before = get().idleSeconds;
+        set({ idleSeconds: seconds, hostBusy: true });
+        try {
+          await setIdleTimeout(code, seconds);
+          channel?.send({ type: "broadcast", event: "room", payload: { k: "roster" } satisfies Wire });
+          await refreshSeats(code, set);
+        } catch (e) {
+          set({ idleSeconds: before, error: message(e) });
+          pushToast(message(e), "bad");
+        } finally {
+          set({ hostBusy: false });
         }
       },
 
@@ -249,7 +323,7 @@ export const useRoom = create<RoomState>()(
       cancelPending: () => set({ pending: null }),
 
       host: async (name, pawn) => {
-        set({ busy: true, error: null });
+        set({ busy: true, error: null, closedNotice: null });
         try {
           const clientId = await ensureSession();
           const code = await createRoom(clientId, name, pawn);
@@ -264,7 +338,7 @@ export const useRoom = create<RoomState>()(
       },
 
       join: async (code, name, pawn) => {
-        set({ busy: true, error: null });
+        set({ busy: true, error: null, closedNotice: null });
         try {
           const clientId = await ensureSession();
           const found = await fetchRoomAndSeats(code);
@@ -438,23 +512,7 @@ export const useRoom = create<RoomState>()(
         const closing = channel;
         channel = null;
 
-        set({
-          code: null,
-          clientId: null,
-          hostId: null,
-          status: "lobby",
-          seats: [],
-          seatOrder: [],
-          present: [],
-          myName: null,
-          watchers: [],
-          version: 0,
-          pending: null,
-          spectatorVoice: false,
-          watching: false,
-          messages: [],
-          unread: 0,
-        });
+        set(OUT_OF_ROOM);
 
         try {
           // Dropping the lobby that goes with it, when there is one, is the
@@ -477,13 +535,11 @@ export const useRoom = create<RoomState>()(
           const clientId = await ensureSession();
           const found = await fetchRoomAndSeats(code);
 
-          // Gone for good: a host who closed the lobby, or the daily sweep.
-          // The board on this device cannot be played on alone.
+          // Gone for good: a host who closed the lobby, or a room left empty
+          // past its timeout. The board on this device cannot be played on
+          // alone.
           if (!found) {
-            setActionRelay(null);
-            set({ code: null, clientId: null, seats: [], seatOrder: [], present: [], myName: null, watchers: [] });
-            useGame.getState().goHome();
-            pushToast("Le salon n'existe plus", "bad");
+            await closeGoneRoom(code);
             return;
           }
 
@@ -570,11 +626,70 @@ type Setter = (partial: Partial<RoomState>) => void;
 
 async function refreshSeats(code: string, set: Setter): Promise<void> {
   const found = await fetchRoomAndSeats(code);
-  if (!found) return;
-  set({ seats: found.seats, spectatorVoice: found.room.spectatorVoice });
+  if (!found) {
+    // Asked about our own room and told there is none: it was closed —
+    // a host leaving the lobby, or a table left empty past its timeout.
+    await closeGoneRoom(code);
+    return;
+  }
+  const before = useRoom.getState().spectatorVoice;
+  // Read before `syncWatchers`, which may hang this device up: the two must
+  // not both tell a spectator the same news.
+  const talking = useVoice.getState().active;
+  set({
+    seats: found.seats,
+    // The host is re-read with everything else. Only the paths through
+    // `host`, `join` and `restore` used to set it, so a host who came back
+    // through the join form was no longer recognised as one — and lost the
+    // only switches that are theirs to move.
+    hostId: found.room.hostId,
+    spectatorVoice: found.room.spectatorVoice,
+    idleSeconds: found.room.idleSeconds,
+  });
   // Who is standing depends on who is sitting: a fresh roster can turn a
   // watcher into a player, or the other way round.
   syncWatchers();
+  announceSpectatorVoice(before, found.room.spectatorVoice, talking);
+}
+
+/**
+ * Tells a spectator the host has just changed what they may do. The switch
+ * lives in a panel they have no reason to open, and a microphone button that
+ * silently comes alive — or dies — reads as the interface misbehaving.
+ */
+function announceSpectatorVoice(before: boolean, now: boolean, talking: boolean): void {
+  const { status, clientId, seats } = useRoom.getState();
+  if (before === now || status === "lobby" || !clientId) return;
+  if (seats.some((s) => s.clientId === clientId && s.seat !== null)) return;
+  // Somebody cut off mid-sentence has already been told, by `syncWatchers`.
+  if (!now && talking) return;
+  pushToast(now ? "L'hôte a ouvert le micro aux spectateurs" : "L'hôte a réservé le micro aux joueurs", "info");
+}
+
+/**
+ * The room this device was in no longer exists. Everything that assumed it
+ * did — the relay, the heartbeat, the call, the channel — is taken down, and
+ * the player is sent home with the reason, since a board that nobody else
+ * shares any more cannot be played on.
+ *
+ * Only for the room we are actually in: an answer about a room this device
+ * has since left, arriving late, must not throw it out of the next one.
+ */
+async function closeGoneRoom(code: string): Promise<void> {
+  if (useRoom.getState().code !== code) return;
+  setActionRelay(null);
+  stopHeartbeat();
+  detachVoice();
+  const closing = channel;
+  channel = null;
+  useRoom.setState({
+    ...OUT_OF_ROOM,
+    // No duration in the sentence: after a reload this device never read the
+    // room's timeout, and a wrong figure is worse than none.
+    closedNotice: `Le salon ${formatCode(code)} a été fermé : plus aucun joueur n'y était assis, ou son hôte l'a quitté avant le début de la partie.`,
+  });
+  useGame.getState().goHome();
+  if (closing) await supabase().removeChannel(closing);
 }
 
 /**
@@ -705,12 +820,24 @@ function stopHeartbeat(): void {
  */
 function startHeartbeat(code: string): void {
   stopHeartbeat();
-  heartbeat = setInterval(() => {
-    void touchSeat(code).catch(() => {
-      // A missed beat is not worth a message: the next one is twenty seconds
-      // away and the threshold is nearly four times that.
-    });
-  }, HEARTBEAT_MS);
+  heartbeat = setInterval(() => void beat(code), HEARTBEAT_MS);
+}
+
+/**
+ * One report. The answer says whether the room is still there, which is how
+ * a device that slept through the room's expiry finds out it has nowhere to
+ * go back to.
+ */
+async function beat(code: string): Promise<void> {
+  let alive = true;
+  try {
+    alive = await touchSeat(code);
+  } catch {
+    // A missed beat is not worth a message: the next one is twenty seconds
+    // away and the threshold is nearly four times that.
+    return;
+  }
+  if (!alive) await closeGoneRoom(code);
 }
 
 /** Whoever this client id belongs to, named as the table knows them. */
@@ -759,13 +886,21 @@ async function connect(
     if (get().status !== "lobby") pushToast(text, tone);
   };
 
-  channel.on("presence", { event: "join" }, ({ key }) => {
-    if (Date.now() < quietUntil || key === clientId) return;
+  // A device that re-publishes its presence — opening or closing its
+  // microphone, taking a new name — reaches here too, as a join of the new
+  // payload followed by a leave of the old one, under the same key. Announcing
+  // those put "X a quitté la partie" then "X a rejoint la partie" on every
+  // screen each time anybody touched their microphone. `currentPresences` is
+  // what tells them apart: on a join it is what the key held *before*, on a
+  // leave what it still holds *after* — either way non-empty means the device
+  // never left.
+  channel.on("presence", { event: "join" }, ({ key, currentPresences }) => {
+    if (Date.now() < quietUntil || key === clientId || currentPresences.length > 0) return;
     void refreshSeats(code, set).then(() => announce(`${nameFor(key, get)} a rejoint la partie`, "good"));
   });
 
-  channel.on("presence", { event: "leave" }, ({ key }) => {
-    if (Date.now() < quietUntil || key === clientId) return;
+  channel.on("presence", { event: "leave" }, ({ key, currentPresences }) => {
+    if (Date.now() < quietUntil || key === clientId || currentPresences.length > 0) return;
     // Named before the roster is refreshed: the row of a player who left for
     // good is about to disappear from it.
     const who = nameFor(key, get);
@@ -787,7 +922,7 @@ async function connect(
   });
 
   startHeartbeat(code);
-  void touchSeat(code).catch(() => undefined);
+  void beat(code);
 
   attachVoice({
     selfId: clientId,
@@ -876,7 +1011,13 @@ async function handle(
       // rather than drop the action and drift: a dropped *state-changing*
       // action leaves this version counter agreeing while the board under
       // it quietly diverges.
-      if (msg.action.t === "rename" && seatOf(get().seatOrder, get().seats, msg.by) !== msg.action.playerId) {
+      // Walking out of the game is held to the same rule: only the device in
+      // the chair can resign it, or one stale screen could eliminate somebody
+      // who never asked to leave.
+      if (
+        (msg.action.t === "rename" || msg.action.t === "resign") &&
+        seatOf(get().seatOrder, get().seats, msg.by) !== msg.action.playerId
+      ) {
         await resync(code, clientId, set);
         return;
       }

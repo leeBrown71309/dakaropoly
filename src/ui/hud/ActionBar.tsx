@@ -303,20 +303,23 @@ export function ActionBar() {
             onClick={toggleTrade}
           />
           <Fitting icon="receipt" label="Journal" active={logOpen} onClick={toggleLog} />
-          {online && (
+          {online && !micAllowed && (
+            // A spectator's greyed microphone is the button most likely to be
+            // tapped and least likely to explain itself: the native title
+            // never shows on a phone, which is where this is played.
+            <Tooltip
+              title="Micro réservé aux joueurs"
+              detail="L'hôte n'a pas ouvert le vocal aux spectateurs. Il peut le faire dans Paramètres, onglet Salon."
+            >
+              <Fitting icon="micOff" label="Micro réservé aux joueurs" disabled />
+            </Tooltip>
+          )}
+          {online && micAllowed && (
             <Fitting
-              icon={(voiceActive && voiceMuted) || !micAllowed ? "micOff" : "mic"}
-              label={
-                !micAllowed
-                  ? "Micro réservé aux joueurs"
-                  : !voiceActive
-                    ? "Activer le micro"
-                    : voiceMuted
-                      ? "Reprendre le micro"
-                      : "Couper le micro"
-              }
+              icon={voiceActive && voiceMuted ? "micOff" : "mic"}
+              label={!voiceActive ? "Activer le micro" : voiceMuted ? "Reprendre le micro" : "Couper le micro"}
               active={voiceActive && !voiceMuted}
-              disabled={voiceBusy || !micAllowed}
+              disabled={voiceBusy}
               onClick={() =>
                 // Asking for the microphone costs the page its fullscreen on
                 // Android: the prompt cannot be shown over it. The wrapper
