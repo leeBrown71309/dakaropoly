@@ -632,14 +632,38 @@ async function refreshSeats(code: string, set: Setter): Promise<void> {
     await closeGoneRoom(code);
     return;
   }
+  const before = useRoom.getState().spectatorVoice;
+  // Read before `syncWatchers`, which may hang this device up: the two must
+  // not both tell a spectator the same news.
+  const talking = useVoice.getState().active;
   set({
     seats: found.seats,
+    // The host is re-read with everything else. Only the paths through
+    // `host`, `join` and `restore` used to set it, so a host who came back
+    // through the join form was no longer recognised as one — and lost the
+    // only switches that are theirs to move.
+    hostId: found.room.hostId,
     spectatorVoice: found.room.spectatorVoice,
     idleSeconds: found.room.idleSeconds,
   });
   // Who is standing depends on who is sitting: a fresh roster can turn a
   // watcher into a player, or the other way round.
   syncWatchers();
+  announceSpectatorVoice(before, found.room.spectatorVoice, talking);
+}
+
+/**
+ * Tells a spectator the host has just changed what they may do. The switch
+ * lives in a panel they have no reason to open, and a microphone button that
+ * silently comes alive — or dies — reads as the interface misbehaving.
+ */
+function announceSpectatorVoice(before: boolean, now: boolean, talking: boolean): void {
+  const { status, clientId, seats } = useRoom.getState();
+  if (before === now || status === "lobby" || !clientId) return;
+  if (seats.some((s) => s.clientId === clientId && s.seat !== null)) return;
+  // Somebody cut off mid-sentence has already been told, by `syncWatchers`.
+  if (!now && talking) return;
+  pushToast(now ? "L'hôte a ouvert le micro aux spectateurs" : "L'hôte a réservé le micro aux joueurs", "info");
 }
 
 /**
@@ -862,13 +886,21 @@ async function connect(
     if (get().status !== "lobby") pushToast(text, tone);
   };
 
-  channel.on("presence", { event: "join" }, ({ key }) => {
-    if (Date.now() < quietUntil || key === clientId) return;
+  // A device that re-publishes its presence — opening or closing its
+  // microphone, taking a new name — reaches here too, as a join of the new
+  // payload followed by a leave of the old one, under the same key. Announcing
+  // those put "X a quitté la partie" then "X a rejoint la partie" on every
+  // screen each time anybody touched their microphone. `currentPresences` is
+  // what tells them apart: on a join it is what the key held *before*, on a
+  // leave what it still holds *after* — either way non-empty means the device
+  // never left.
+  channel.on("presence", { event: "join" }, ({ key, currentPresences }) => {
+    if (Date.now() < quietUntil || key === clientId || currentPresences.length > 0) return;
     void refreshSeats(code, set).then(() => announce(`${nameFor(key, get)} a rejoint la partie`, "good"));
   });
 
-  channel.on("presence", { event: "leave" }, ({ key }) => {
-    if (Date.now() < quietUntil || key === clientId) return;
+  channel.on("presence", { event: "leave" }, ({ key, currentPresences }) => {
+    if (Date.now() < quietUntil || key === clientId || currentPresences.length > 0) return;
     // Named before the roster is refreshed: the row of a player who left for
     // good is about to disappear from it.
     const who = nameFor(key, get);
