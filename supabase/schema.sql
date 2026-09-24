@@ -576,6 +576,32 @@ begin
     return;
   end if;
 
+  -- In the lobby a chair is numbered by its pawn; from here on it is the
+  -- engine's player number, its position in `seat_order` — which is what
+  -- `seatOf`, `resume_seat` and every roster lookup compare it with. Left as
+  -- pawns, a table that picked pawns 1 and 3 kicked off with both players
+  -- reading as spectators of their own game, and a reload was refused a
+  -- chair that "was still taken" by the other player's pawn number.
+  --
+  -- Anybody who sat down after the host's list was drawn up is not in the
+  -- game, and stands. The renumbering goes through negative numbers because
+  -- the seat index is checked row by row: moving pawn 2 onto seat 1 while
+  -- pawn 1 still holds it would collide halfway through.
+  update public.room_players p
+     set seat = null
+   where p.room_code = p_code
+     and p.seat is not null
+     and not (p_seat_order ? p.client_id::text);
+
+  update public.room_players p
+     set seat = -o.idx::smallint
+    from jsonb_array_elements_text(p_seat_order) with ordinality as o(client, idx)
+   where p.room_code = p_code and p.client_id::text = o.client;
+
+  update public.room_players
+     set seat = -seat - 1
+   where room_code = p_code and seat < 0;
+
   insert into public.games (room_code) values (p_code) returning id into gid;
   update public.rooms set game_id = gid where code = p_code;
 

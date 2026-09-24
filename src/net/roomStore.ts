@@ -486,12 +486,28 @@ export const useRoom = create<RoomState>()(
           );
           const seatOrder = seated.map((s) => s.clientId);
           await startRoom(code, seed, game, seatOrder);
-          set({ status: "playing", version: 1, seatOrder });
+          // Kickoff renumbers the chairs from pawns to player numbers (see
+          // `open_room`). The roster read before it still numbers them by
+          // pawn, and a host whose pawn was not the lowest at the table
+          // would have been seated as a spectator of their own game.
+          const players = seated.map((s, i) => ({ ...s, seat: i }));
+          set({
+            status: "playing",
+            version: 1,
+            seatOrder,
+            // Anybody else in the roster was not in the list, and stands.
+            seats: [
+              ...players,
+              ...get()
+                .seats.filter((s) => !seatOrder.includes(s.clientId))
+                .map((s) => ({ ...s, seat: null })),
+            ],
+          });
           // The seating just froze: whoever held a seat is a player now, and
           // everybody left standing is a spectator.
           syncWatchers();
           channel?.send({ type: "broadcast", event: "room", payload: { k: "start" } satisfies Wire });
-          adopt(game, seatOrder, seated, clientId);
+          adopt(game, seatOrder, players, clientId);
         } catch (e) {
           set({ error: message(e) });
         } finally {
