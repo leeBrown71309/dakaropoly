@@ -25,6 +25,8 @@ export type AccountStatus = "unavailable" | "loading" | "guest" | "needs-profile
 
 interface AccountState {
   status: AccountStatus;
+  /** The account's id, which is also the identity that holds its chairs. */
+  userId: string | null;
   profile: Profile | null;
   /** The Google account's own name and photo, offered when the profile is made. */
   googleName: string | null;
@@ -64,6 +66,7 @@ let generation = 0;
 
 export const useAccount = create<AccountState>()((set, get) => ({
   status: onlineAvailable ? "loading" : "unavailable",
+  userId: null,
   profile: null,
   googleName: null,
   googlePhoto: null,
@@ -82,13 +85,14 @@ export const useAccount = create<AccountState>()((set, get) => ({
     if (mine !== generation) return;
     const user = data.session?.user;
     if (error || !user || user.is_anonymous !== false) {
-      set({ status: "guest", profile: null, googleName: null, googlePhoto: null });
+      set({ status: "guest", userId: null, profile: null, googleName: null, googlePhoto: null });
       return;
     }
 
     const meta = user.user_metadata as Record<string, unknown>;
     const text = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
     set({
+      userId: user.id,
       googleName: text(meta.full_name) ?? text(meta.name),
       googlePhoto: text(meta.avatar_url) ?? text(meta.picture),
     });

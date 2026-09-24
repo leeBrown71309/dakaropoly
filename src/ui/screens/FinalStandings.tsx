@@ -62,6 +62,18 @@ function computeAwards(game: GameState): { icon: IconName; label: string; name: 
 interface FinalStandingsProps {
   game: GameState;
   compact: boolean;
+  /** The small print above the title. */
+  caption?: string;
+  /**
+   * The table stopped before anybody won — everyone left and the room
+   * closed. The order is then the net worth of the last turn played.
+   */
+  unfinished?: boolean;
+  /**
+   * Each player's photo, by player id, when the game is read back from the
+   * history. Left out, photos come from the room this device is in.
+   */
+  photos?: Record<number, string | null>;
 }
 
 /**
@@ -71,10 +83,20 @@ interface FinalStandingsProps {
  * Drawn from nothing but the board, so the same card serves the game that
  * has just finished and any game read back from the history.
  */
-export function FinalStandings({ game, compact }: FinalStandingsProps) {
+export function FinalStandings({
+  game,
+  compact,
+  caption = "Fin de partie",
+  unfinished = false,
+  photos,
+}: FinalStandingsProps) {
   const ranking = standingsOf(game);
-  const winner = game.winner !== null ? game.players[game.winner] : null;
+  const winner = !unfinished && game.winner !== null ? game.players[game.winner] : null;
   const awards = computeAwards(game);
+  const title = unfinished ? "Partie inachevée" : winner ? `${winner.name} remporte Dakar` : "Match nul";
+  const summary = unfinished
+    ? `Arrêtée au tour ${game.turnCount} · classement au patrimoine`
+    : `${game.turnCount} tours joués · ${ranking.length} patrimoines évalués`;
 
   return (
     <Card className={`relative text-center ${compact ? "px-4 pb-4 pt-5" : "px-7 pb-7 pt-8"}`}>
@@ -95,13 +117,11 @@ export function FinalStandings({ game, compact }: FinalStandingsProps) {
         <Icon name="crown" size={compact ? 20 : 28} strokeWidth={1.6} />
       </motion.span>
 
-      <div className={`u-label text-gold-700 ${compact ? "mt-4" : "mt-6"}`}>Fin de partie</div>
+      <div className={`u-label text-gold-700 ${compact ? "mt-4" : "mt-6"}`}>{caption}</div>
       <h1 className={`u-display mt-1.5 leading-tight text-ink-900 ${compact ? "text-[21px]" : "text-[28px]"}`}>
-        {winner ? `${winner.name} remporte Dakar` : "Match nul"}
+        {title}
       </h1>
-      <p className={`mt-1 text-ink-500 ${compact ? "text-[11px]" : "text-[12.5px]"}`}>
-        {game.turnCount} tours joués · {ranking.length} patrimoines évalués
-      </p>
+      <p className={`mt-1 text-ink-500 ${compact ? "text-[11px]" : "text-[12.5px]"}`}>{summary}</p>
 
       <BrassRule className={compact ? "my-3" : "my-5"} />
 
@@ -128,7 +148,7 @@ export function FinalStandings({ game, compact }: FinalStandingsProps) {
             >
               {i + 1}
             </span>
-            <PlayerMark player={p} size={compact ? 18 : 22} />
+            <PlayerMark player={p} size={compact ? 20 : 24} avatar={photos ? (photos[p.id] ?? null) : undefined} />
             <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-ink-900">
               {p.name}
               {p.bankrupt && <span className="ml-2 u-label text-clay-700">Faillite</span>}
