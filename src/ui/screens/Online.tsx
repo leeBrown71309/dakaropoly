@@ -13,6 +13,8 @@ import { Button, Fitting } from "../kit/Button";
 import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
 import { HostSettings } from "../hud/settings/HostSettings";
+import { useAccount } from "../../net/accountStore";
+import { Avatar } from "../kit/Avatar";
 
 const MAX_PLAYERS = 8;
 
@@ -47,8 +49,11 @@ export function Online() {
   const host = useRoom((s) => s.host);
   const join = useRoom((s) => s.join);
 
+  // An account sits down under its pseudo; there is no name to type.
+  const account = useAccount((s) => (s.status === "ready" ? s.profile : null));
+
   const joining = mode === "join";
-  const nameOk = name.trim().length > 0;
+  const nameOk = account !== null || name.trim().length > 0;
   const codeOk = codeInput.length === CODE_SIZE;
   const ready = nameOk && (!joining || codeOk) && !busy;
 
@@ -111,14 +116,18 @@ export function Online() {
                 )}
 
                 <Label>Votre nom</Label>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && submit()}
-                  placeholder="Comment on vous appelle ?"
-                  maxLength={NAME_MAX}
-                  className="field mt-1 text-[14px]"
-                />
+                {account ? (
+                  <AccountIdentity pseudo={account.pseudo} avatar={account.avatar} />
+                ) : (
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && submit()}
+                    placeholder="Comment on vous appelle ?"
+                    maxLength={NAME_MAX}
+                    className="field mt-1 text-[14px]"
+                  />
+                )}
 
                 <BrassRule className="my-3" />
 
@@ -146,6 +155,19 @@ export function Online() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+
+/** Who an account plays as: its pseudo, which is changed in the profile, not here. */
+function AccountIdentity({ pseudo, avatar }: { pseudo: string; avatar: string | null }) {
+  return (
+    <div className="mt-1 flex items-center gap-2.5">
+      <Avatar src={avatar} name={pseudo} size={32} />
+      <span className="min-w-0 flex-1 truncate text-[14px] font-bold text-ink-900">{pseudo}</span>
+      <span className="u-label shrink-0 text-ink-300">Modifiable dans le profil</span>
     </div>
   );
 }
@@ -240,6 +262,7 @@ function Lobby({ compact }: { compact: boolean }) {
   // keyboard on every keystroke. The Modifier button is the moment of truth —
   // no blur commit, so a stray click elsewhere never renames anybody.
   const renameSelf = useRoom((s) => s.renameSelf);
+  const account = useAccount((s) => (s.status === "ready" ? s.profile : null));
   const [draftName, setDraftName] = useState<string | null>(null);
   const commitName = () => {
     const clean = (draftName ?? "").trim();
@@ -308,6 +331,7 @@ function Lobby({ compact }: { compact: boolean }) {
                 boxShadow: "inset 0 0 0 1px rgba(110,86,52,.2)",
               }}
             >
+              {s.avatar && <Avatar src={s.avatar} name={s.name} size={24} ring={PLAYER_COLORS[s.pawn ?? 0]} />}
               <span style={{ color: PLAYER_COLORS[s.pawn ?? 0] }} className="shrink-0">
                 <PawnGlyph pawn={s.pawn ?? 0} size={22} />
               </span>
@@ -329,6 +353,9 @@ function Lobby({ compact }: { compact: boolean }) {
           <>
             <BrassRule className="my-2.5" />
             <Label>Votre nom</Label>
+            {account ? (
+              <AccountIdentity pseudo={account.pseudo} avatar={account.avatar} />
+            ) : (
             <div className="mt-1 flex items-center gap-1.5">
               <input
                 value={draftName ?? me.name}
@@ -349,6 +376,7 @@ function Lobby({ compact }: { compact: boolean }) {
                 Modifier
               </Button>
             </div>
+            )}
             <Label className="mt-2.5">Changer de pion</Label>
             <PawnPicker
               value={me.pawn}

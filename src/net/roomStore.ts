@@ -7,6 +7,7 @@ import { createGame } from "../game/engine";
 import { pushToast, setActionRelay, useGame } from "../game/store";
 import { sfx } from "../audio/sounds";
 import { ensureSession, supabase } from "./supabase";
+import { useAccount } from "./accountStore";
 import {
   attachVoice,
   detachVoice,
@@ -192,6 +193,21 @@ let heartbeat: ReturnType<typeof setInterval> | null = null;
 /** How often this device reports in. The database calls a seat free at 75 s. */
 const HEARTBEAT_MS = 20_000;
 
+/**
+ * The name this device sits down under. An account answers to its pseudo at
+ * every table — the database enforces it on the way in (`claim_seat`), and
+ * this keeps presence and the local copy saying the same thing.
+ */
+function tableName(typed: string): string {
+  const { status, profile } = useAccount.getState();
+  return status === "ready" && profile ? profile.pseudo : typed;
+}
+
+/** Whether this device plays as an account, whose name is not its own to change here. */
+function isAccount(): boolean {
+  return useAccount.getState().status === "ready";
+}
+
 const message = (e: unknown): string =>
   e instanceof Error ? e.message : "Quelque chose n'a pas marché";
 
@@ -322,7 +338,8 @@ export const useRoom = create<RoomState>()(
       },
       cancelPending: () => set({ pending: null }),
 
-      host: async (name, pawn) => {
+      host: async (typed, pawn) => {
+        const name = tableName(typed);
         set({ busy: true, error: null, closedNotice: null });
         try {
           const clientId = await ensureSession();
@@ -337,7 +354,8 @@ export const useRoom = create<RoomState>()(
         }
       },
 
-      join: async (code, name, pawn) => {
+      join: async (code, typed, pawn) => {
+        const name = tableName(typed);
         set({ busy: true, error: null, closedNotice: null });
         try {
           const clientId = await ensureSession();
@@ -380,6 +398,7 @@ export const useRoom = create<RoomState>()(
           await resumeSeat(pending.code, seat);
           set({ clientId, pending: null, watching: false });
           await enterPlaying(pending.code, clientId, set, get);
+          adoptPseudo(seat);
         } catch (e) {
           // The offer was a snapshot of a moment; somebody may have taken the
           // chair since. Refresh what is on screen rather than leave a list
@@ -413,7 +432,8 @@ export const useRoom = create<RoomState>()(
         }
       },
 
-      setPawn: async (pawn, name) => {
+      setPawn: async (pawn, typed) => {
+        const name = tableName(typed);
         const { code, clientId } = get();
         if (!code || !clientId) return;
         try {
@@ -443,6 +463,12 @@ export const useRoom = create<RoomState>()(
       renameSelf: async (name) => {
         const { code, clientId, seats, seatOrder } = get();
         if (!code || !clientId) return;
+        if (isAccount()) {
+          const refusal = "Votre nom est votre pseudo : changez-le depuis votre profil";
+          set({ error: refusal });
+          pushToast(refusal, "info");
+          return;
+        }
         const clean = name.trim().slice(0, NAME_MAX);
         if (!clean) {
           set({ error: "Il faut un nom pour que les autres vous reconnaissent" });
@@ -581,6 +607,7 @@ export const useRoom = create<RoomState>()(
           const seat = get().watching ? -1 : room.seatOrder.indexOf(clientId);
           if (seat >= 0) await resumeSeat(code, seat);
           await enterPlaying(code, clientId, set, get);
+          if (seat >= 0) adoptPseudo(seat);
         } catch (e) {
           // Anything else — no signal, a server having a moment — leaves the
           // room where it is and the guard in place, so the player can try
@@ -755,6 +782,23 @@ function syncWatchers(): void {
       pushToast("L'hôte a réservé le micro aux joueurs", "info");
     }
   }
+}
+
+/**
+ * Puts an account's pseudo on the board once it holds a chair.
+ *
+ * Taking over somebody's chair left their name on every screen: the engine
+ * froze it at kickoff. The roster already says the pseudo (`resume_seat`);
+ * the board follows through a `rename`, which every client replays at the
+ * same point in the sequence.
+ */
+function adoptPseudo(seat: number): void {
+  const { status, profile } = useAccount.getState();
+  if (status !== "ready" || !profile) return;
+  const game = useGame.getState().game;
+  if (!game || game.players[seat]?.name === profile.pseudo) return;
+  useRoom.setState({ myName: profile.pseudo });
+  useGame.getState().dispatch({ t: "rename", playerId: seat, name: profile.pseudo });
 }
 
 /** Re-reads the table behind an offer list that has just been refused. */
