@@ -26,9 +26,26 @@ export interface Profile {
 export async function signInWithGoogle(): Promise<void> {
   const { error } = await supabase().auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo: `${location.origin}${location.pathname}` },
+    options: {
+      redirectTo: `${location.origin}${location.pathname}`,
+      // Google otherwise signs straight back into whichever account the
+      // browser already uses — which on a shared computer is somebody else.
+      queryParams: { prompt: "select_account" },
+    },
   });
   if (error) throw new Error(`Connexion à Google impossible : ${error.message}`);
+}
+
+/**
+ * Makes this tab a guest, leaving the account signed in everywhere else.
+ *
+ * A fresh tab reads the browser's account, so a second person opening an
+ * invitation on the same computer arrived as the first. The anonymous
+ * session lands in the tab (see `authStorage`), which is read first.
+ */
+export async function playAsGuestHere(): Promise<void> {
+  const { error } = await supabase().auth.signInAnonymously();
+  if (error) throw new Error(`Impossible de passer en invité : ${error.message}`);
 }
 
 /** Signs this browser out. The next room it enters, it enters as a guest. */

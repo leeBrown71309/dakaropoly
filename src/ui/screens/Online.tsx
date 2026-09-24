@@ -117,7 +117,10 @@ export function Online() {
 
                 <Label>Votre nom</Label>
                 {account ? (
-                  <AccountIdentity pseudo={account.pseudo} avatar={account.avatar} />
+                  <>
+                    <AccountIdentity pseudo={account.pseudo} avatar={account.avatar} />
+                    <NotMe />
+                  </>
                 ) : (
                   <input
                     value={name}
@@ -169,6 +172,26 @@ function AccountIdentity({ pseudo, avatar }: { pseudo: string; avatar: string | 
       <span className="min-w-0 flex-1 truncate text-[14px] font-bold text-ink-900">{pseudo}</span>
       <span className="u-label shrink-0 text-ink-300">Modifiable dans le profil</span>
     </div>
+  );
+}
+
+/**
+ * For a second person on the same computer. The browser's account is read
+ * by every new tab, so an invitation opened next to the host's tab arrives
+ * as the host; this turns the tab into a guest, with a name field of its own.
+ */
+function NotMe() {
+  const playAsGuest = useAccount((s) => s.playAsGuest);
+  const busy = useAccount((s) => s.busy);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void playAsGuest()}
+      className="mt-1.5 text-[11.5px] font-semibold text-teal-700 underline underline-offset-2"
+    >
+      Ce n'est pas vous ? Jouer en invité dans cet onglet
+    </button>
   );
 }
 

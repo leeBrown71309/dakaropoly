@@ -4,6 +4,7 @@ import {
   deleteAccount,
   fetchMyProfile,
   saveProfile,
+  playAsGuestHere,
   signInWithGoogle,
   signOut,
   type Profile,
@@ -38,6 +39,8 @@ interface AccountState {
   refresh: () => Promise<void>;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  /** Plays this tab as a guest, without signing the account out elsewhere. */
+  playAsGuest: () => Promise<void>;
   /** Saves the profile; reports whether it was taken. */
   save: (profile: Profile) => Promise<boolean>;
   /** Deletes the account for good. */
@@ -124,6 +127,20 @@ export const useAccount = create<AccountState>()((set, get) => ({
     set({ busy: true, error: null });
     try {
       await signOut();
+      await get().refresh();
+    } catch (e) {
+      set({ error: message(e) });
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  playAsGuest: async () => {
+    const refused = refuseInRoom();
+    if (refused) return set({ error: refused });
+    set({ busy: true, error: null });
+    try {
+      await playAsGuestHere();
       await get().refresh();
     } catch (e) {
       set({ error: message(e) });

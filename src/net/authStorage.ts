@@ -26,11 +26,18 @@ export interface KeyValueStore {
  * the redirect to Google — belongs to the tab that wrote it.
  */
 export function isAccountSession(value: string): boolean {
+  return accountOf(value) !== null;
+}
+
+/** The account a stored value belongs to, or `null` for anything else. */
+function accountOf(value: string | null): string | null {
+  if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as { user?: { is_anonymous?: unknown } } | null;
-    return parsed?.user?.is_anonymous === false;
+    const parsed = JSON.parse(value) as { user?: { id?: unknown; is_anonymous?: unknown } } | null;
+    const id = parsed?.user?.id;
+    return parsed?.user?.is_anonymous === false && typeof id === "string" ? id : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -38,7 +45,15 @@ export function createAuthStorage(tab: KeyValueStore, browser: KeyValueStore): K
   return {
     getItem: (key) => tab.getItem(key) ?? browser.getItem(key),
     setItem: (key, value) => {
-      if (isAccountSession(value)) {
+      const account = accountOf(value);
+      // A second person signing in on a browser that already holds somebody
+      // else's account keeps theirs in this tab. Writing it to the browser
+      // would turn every other tab — the first person's, seated at a table —
+      // into the second person.
+      const other = accountOf(browser.getItem(key));
+      if (account && other && other !== account) {
+        tab.setItem(key, value);
+      } else if (account) {
         browser.setItem(key, value);
         // The guest session this tab held until the account arrived would
         // otherwise go on shadowing it on every read.

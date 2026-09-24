@@ -71,6 +71,17 @@ describe("createAuthStorage", () => {
     expect(browser.data.get(KEY)).toBe(account);
   });
 
+  it("keeps a second account in its own tab rather than taking over the first", () => {
+    const tab = memory();
+    const browser = memory();
+    browser.setItem(KEY, account);
+    const other = JSON.stringify({ access_token: "b", user: { id: "b", is_anonymous: false } });
+    const store = createAuthStorage(tab, browser);
+    store.setItem(KEY, other);
+    expect(browser.data.get(KEY)).toBe(account);
+    expect(store.getItem(KEY)).toBe(other);
+  });
+
   it("signs the account out when it is the one being removed", () => {
     const browser = memory();
     browser.setItem(KEY, account);
