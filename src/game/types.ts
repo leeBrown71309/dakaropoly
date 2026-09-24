@@ -71,6 +71,18 @@ export interface Player {
   jailAttempts: number;
   getOutCards: number;
   bankrupt: boolean;
+  /**
+   * When this player left the game, counted in departures: 1 for the first
+   * one out. `null` while they are still playing.
+   *
+   * Everyone eliminated is worth nothing, so net worth alone ranked them in
+   * whatever order the array happened to hold — the player who went under in
+   * the first hour could finish above the one who held on until the end.
+   * A turn number would not do either: a card that makes everybody pay can
+   * take two players down in the same turn. Boards saved or recorded before
+   * the field existed carry no value at all, which reads as `null`.
+   */
+  eliminationOrder: number | null;
   stats: PlayerStats;
 }
 
