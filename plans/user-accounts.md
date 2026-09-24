@@ -35,12 +35,12 @@ inachevées) avec leur détail. Le jeu reste entièrement jouable sans compte.
 
 ## Prérequis (à faire par toi, en parallèle du code)
 
-- [ ] P1. Google Cloud Console : écran de consentement OAuth (externe, scopes `openid`,
+- [x] P1. Google Cloud Console : écran de consentement OAuth (externe, scopes `openid`,
       `email`, `profile`) et identifiant OAuth « Application Web », avec l'URI de
       redirection `https://<ref>.supabase.co/auth/v1/callback`.
-- [ ] P2. Supabase → Authentication → Providers → Google : activer, coller l'identifiant
+- [x] P2. Supabase → Authentication → Providers → Google : activer, coller l'identifiant
       et le secret.
-- [ ] P3. Supabase → Authentication → URL Configuration : ajouter
+- [x] P3. Supabase → Authentication → URL Configuration : ajouter
       `http://localhost:5173/**` et `https://leebrown71309.github.io/dakaropoly/**`.
 
 ## Tâches
@@ -129,40 +129,40 @@ inachevées) avec leur détail. Le jeu reste entièrement jouable sans compte.
 
 ### Phase 4 — Profil et tableau de bord
 
-- [ ] 27. `src/ui/kit/Avatar.tsx` : la photo, ou l'initiale sur un fond aux couleurs
+- [x] 27. `src/ui/kit/Avatar.tsx` : la photo, ou l'initiale sur un fond aux couleurs
       du plateau (SVG, sans fichier externe).
-- [ ] 28. `src/ui/icons/PlayerMark.tsx` : prop `avatar` facultative ; sinon, la photo
+- [x] 28. `src/ui/icons/PlayerMark.tsx` : prop `avatar` facultative ; sinon, la photo
       du siège dans le salon courant. Photo cerclée de la couleur du joueur, avec son
       pion en pastille à partir de 20 px.
-- [ ] 29. `src/game/store.ts` + `src/App.tsx` : écran `"profile"` et `openProfile()`.
-- [ ] 30. `src/ui/profile/ProfileForm.tsx` : pseudo avec disponibilité vérifiée
+- [x] 29. `src/game/store.ts` + `src/App.tsx` : écran `"profile"` et `openProfile()`.
+- [x] 30. `src/ui/profile/ProfileForm.tsx` : pseudo avec disponibilité vérifiée
       pendant la saisie (délai de 400 ms, « Ce pseudo existe déjà ») ; photo (Google,
       import, retrait) ; Enregistrer. Sert à la création comme à la modification.
-- [ ] 31. `src/ui/profile/GameHistory.tsx` : les 20 dernières parties (date, durée,
+- [x] 31. `src/ui/profile/GameHistory.tsx` : les 20 dernières parties (date, durée,
       tours, badge Inachevée, ta place, vainqueur, joueurs, mention de reprise de
       chaise).
-- [ ] 32. `src/ui/profile/GameDetail.tsx` : `FinalStandings` en lecture seule, avec
+- [x] 32. `src/ui/profile/GameDetail.tsx` : `FinalStandings` en lecture seule, avec
       les photos venant de `people`.
-- [ ] 33. `src/ui/screens/Profile.tsx` : titre, section Profil, section Mes parties,
+- [x] 33. `src/ui/screens/Profile.tsx` : titre, section Profil, section Mes parties,
       puis en pied de page Se déconnecter et Supprimer mon compte (confirmation).
       En `needs-profile`, n'afficher que le formulaire de création.
-- [ ] 34. `src/ui/screens/Home.tsx` : bouton « Se connecter avec Google », ou pastille
+- [x] 34. `src/ui/screens/Home.tsx` : bouton « Se connecter avec Google », ou pastille
       avatar + pseudo qui ouvre le profil. Masqué sans configuration en ligne.
-- [ ] 35. Vérifier : tsc, tests, build. Commit `feat(ui): add the profile screen and
+- [x] 35. Vérifier : tsc, tests, build. Commit `feat(ui): add the profile screen and
       the history of online games`.
 
 ### Phase 5 — Le compte à la table
 
-- [ ] 36. `src/ui/screens/Online.tsx` : pour un compte, remplacer le champ « Votre
+- [x] 36. `src/ui/screens/Online.tsx` : pour un compte, remplacer le champ « Votre
       nom » par l'identité (avatar + pseudo, « à modifier dans le profil »). Pas de
       renommage dans le salon d'attente. Avatars dans la liste des joueurs.
-- [ ] 37. `src/net/roomStore.ts` : `host`, `join` et `setPawn` envoient le pseudo ;
+- [x] 37. `src/net/roomStore.ts` : `host`, `join` et `setPawn` envoient le pseudo ;
       `renameSelf` est refusé à un compte ; après `resume` d'une chaise par un compte,
       dispatcher `rename` si le nom sur le plateau n'est pas son pseudo.
-- [ ] 38. `src/ui/hud/PlayersPanel.tsx`, `src/ui/hud/ChatPanel.tsx`,
+- [x] 38. `src/ui/hud/PlayersPanel.tsx`, `src/ui/hud/ChatPanel.tsx`,
       `src/ui/hud/settings/RoomTab.tsx` : photos via `PlayerMark` / `Avatar`
       (spectateurs : initiale). Le renommage dans RoomTab est masqué pour un compte.
-- [ ] 39. Vérifier : tsc, tests, build. Commit `feat(net): carry the account's
+- [x] 39. Vérifier : tsc, tests, build. Commit `feat(net): carry the account's
       pseudo and photo to the table`.
 
 ### Phase 6 — Vérification et documentation
@@ -172,7 +172,7 @@ inachevées) avec leur détail. Le jeu reste entièrement jouable sans compte.
 - [ ] 41. Navigateur, mode compte (une fois P1–P3 faits) : connexion, création du
       profil, pseudo déjà pris, photo, salon, partie jusqu'au bout, historique,
       détail, partie inachevée après expiration du salon, déconnexion, suppression.
-- [ ] 42. `CLAUDE.md` (section Comptes), `HANDOFF.md`, `README.md` (configuration
+- [x] 42. `CLAUDE.md` (section Comptes), `HANDOFF.md`, `README.md` (configuration
       Google). Commit `docs: record accounts and game history`.
 
 ## Limites assumées

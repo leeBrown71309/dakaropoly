@@ -249,6 +249,42 @@ matter live there, not in the client.
   absent player's chair leaves their name on every screen — correct by design
   (`resume_seat` reads it off the board), confusing without the rename.
 
+### Accounts and game history — `src/net/account*.ts`, `src/ui/profile/`
+
+Optional: every path still works for a guest. An account is a Google sign-in
+(Supabase Auth, no server) plus a row in `profiles` — a pseudo, unique **with
+its case**, and an optional photo stored as a 128 px data URL.
+
+- **The Google identity *is* `auth.uid()`**, so it is what holds a chair and
+  every seat function works unchanged. Sign-in and sign-out are offered only
+  from the title screen, never inside a room: they change the identity that
+  holds the chair.
+- **`authStorage.ts` routes the session**: a guest stays in `sessionStorage`
+  (per tab, as before), an account goes to `localStorage` (stays signed in).
+  Reads ask the tab first, so a guest already seated never becomes the account
+  signed in elsewhere. `onAuthStateChange` also carries other tabs' sign-ins,
+  so `accountStore.refresh` re-reads `getSession()` instead of trusting the
+  event.
+- **The pseudo is enforced by the database**: `claim_seat` and `resume_seat`
+  take the name and photo from the profile, `rename_seat` refuses an account.
+  After an account takes over a chair, `adoptPseudo` plays a `rename` so the
+  board follows. `pseudo.ts` mirrors the `profiles_pseudo_shape` constraint —
+  change one, change the other.
+- **Games are recorded by the database, never by a device**: `open_room`
+  opens `games` + one `game_seats` row per chair, `resume_seat` adds a row
+  when a chair changes hands (the game then belongs to both), `advance_room`
+  closes it on `game-over`, and the `rooms_close_game` trigger marks it
+  `unfinished` when the room is swept. A game with no account in it is
+  deleted at close. `final` is the board minus its log; places and prizes are
+  recomputed on the device by `standingsOf` and `FinalStandings` —
+  `src/net/history.ts` holds those reads.
+- **Chairs are renumbered at kickoff.** In the lobby `room_players.seat` is the
+  pawn; `open_room` rewrites it to the engine player number. Before that fix,
+  a table whose pawns were not 0, 1, 2… kicked off with everyone a spectator.
+- `PlayerMark` shows an account's photo (ringed in the player colour, pawn
+  pinned to the corner) through `useSeatPhoto`, which goes through
+  `seat_order`, never the roster's seat number.
+
 ### Voice — `src/net/voice.ts`
 
 Peer to peer, in a full mesh: every device dials every other one directly and
