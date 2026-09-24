@@ -46,7 +46,7 @@ create table if not exists public.room_players (
   seat      smallint,      -- 0..7; null marks a spectator
   name      text not null,
   pawn      smallint,
-  avatar    text,          -- unused: identity is the chosen pawn
+  avatar    text,          -- an account's photo, copied from its profile on sitting down
   joined_at timestamptz not null default now(),
   -- Whether somebody is still there has to be a fact the database can check:
   -- a chair is only offered to someone else once it has gone quiet, and a
@@ -69,6 +69,83 @@ create index if not exists room_players_last_seen
   on public.room_players (room_code, last_seen);
 create index if not exists rooms_stale on public.rooms (updated_at);
 
+-- An account: somebody who signed in with Google and chose how the table
+-- should call them. A guest has no row here, and never needs one — every
+-- path below treats "no profile" as "play exactly as before".
+--
+-- The pseudo is unique *with* its case: « Moussa » and « moussa » are two
+-- players. The shape is checked here as well as in the form, because the
+-- form is only what one client believes. The characters are spelled out as
+-- code point ranges rather than `[[:alpha:]]`, whose meaning depends on the
+-- database locale: Latin letters with their accents, digits, a space, and
+-- `_ . -`.
+create table if not exists public.profiles (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  pseudo     text not null,
+  -- A photo is a data URL, drawn to 128 px on the device that chose it.
+  -- There is no file store to point at, and one small string travels with
+  -- the roster for free. The cap keeps a hand-crafted request from parking a
+  -- megabyte in every `get_room` answer.
+  avatar     text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint profiles_pseudo_unique unique (pseudo),
+  constraint profiles_pseudo_shape check (
+    char_length(pseudo) between 3 and 14
+    and pseudo = btrim(pseudo)
+    and pseudo ~ '^[A-Za-z0-9À-ÖØ-öø-ÿĀ-ſ _.-]+$'
+  ),
+  constraint profiles_avatar_shape check (
+    avatar is null
+    or (avatar like 'data:image/%;base64,%' and char_length(avatar) <= 60000)
+  )
+);
+
+-- One game, from kickoff to its last snapshot. A room is the evening and is
+-- deleted when the evening is over; this is what is left of it afterwards.
+--
+-- `final` is the board as it ended, minus its journal. The ranking and the
+-- evening's prizes are worked out from it on the device, by the same
+-- selectors the end-of-game screen uses — writing the rules of Monopoly a
+-- second time in SQL would give them a second place to drift.
+create table if not exists public.games (
+  id         uuid primary key default gen_random_uuid(),
+  room_code  text not null,
+  status     text not null default 'playing'
+             check (status in ('playing', 'finished', 'unfinished')),
+  started_at timestamptz not null default now(),
+  ended_at   timestamptz,
+  turn_count integer not null default 0,
+  winner     smallint,
+  final      jsonb
+);
+
+-- Who sat in each chair. A chair taken over halfway through gets a second
+-- row with the turn it changed hands on, which is how the history can say
+-- « a repris la place de X » — and why the game belongs to both of them.
+create table if not exists public.game_seats (
+  id         bigint generated always as identity primary key,
+  game_id    uuid not null references public.games(id) on delete cascade,
+  seat       smallint not null,                 -- engine player id
+  -- A guest is recorded by the name they sat under and nothing else. So is
+  -- an account once deleted: the game stays in everybody else's history,
+  -- the person in it does not.
+  account_id uuid references public.profiles(id) on delete set null,
+  name       text not null,
+  pawn       smallint not null,
+  from_turn  integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists game_seats_account on public.game_seats (account_id, game_id);
+create index if not exists game_seats_game on public.game_seats (game_id);
+
+-- Deliberately not a foreign key. A game is closed by a trigger while its
+-- room is being deleted, and a game with no account in it is deleted there
+-- too — an `on delete set null` reaching back into the row being deleted is
+-- an error that would fail the sweep carrying it.
+alter table public.rooms add column if not exists game_id uuid;
+
 -- Row level security is on with no policies at all. Nothing reaches these
 -- tables except through the functions below, which run as the owner. Policies
 -- granting what no path uses would only be somewhere for a mistake to hide —
@@ -78,6 +155,9 @@ create index if not exists rooms_stale on public.rooms (updated_at);
 -- which PostgREST reports as success, so leaving a room did nothing at all.
 alter table public.rooms enable row level security;
 alter table public.room_players enable row level security;
+alter table public.profiles enable row level security;
+alter table public.games enable row level security;
+alter table public.game_seats enable row level security;
 
 -- --------------------------------------------------------------- functions
 --
@@ -189,6 +269,11 @@ end;
 $$;
 
 -- Sitting down in a lobby, or standing at the back when p_pawn is null.
+--
+-- An account sits down under its pseudo and with its photo, read from the
+-- profile rather than from the request: the name typed on a form is only
+-- what one client says, and a pseudo is unique precisely so that nobody
+-- else can wear it.
 create or replace function public.claim_seat(
   p_code text, p_client_id uuid, p_name text, p_pawn smallint
 )
@@ -198,7 +283,9 @@ security definer
 set search_path = public
 as $$
 declare
-  me uuid := coalesce(auth.uid(), p_client_id);
+  me          uuid := coalesce(auth.uid(), p_client_id);
+  seat_name   text;
+  seat_avatar text;
 begin
   if me is null then
     raise exception 'Identité manquante' using errcode = '28000';
@@ -207,11 +294,16 @@ begin
     raise exception 'Aucun salon avec ce code' using errcode = 'P0002';
   end if;
 
-  insert into public.room_players (room_code, client_id, seat, name, pawn, last_seen)
-  values (p_code, me, p_pawn, p_name, p_pawn, now())
+  -- A guest finds no profile, and the select leaves both empty.
+  select pr.pseudo, pr.avatar into seat_name, seat_avatar
+    from public.profiles pr where pr.id = me;
+  seat_name := coalesce(seat_name, p_name);
+
+  insert into public.room_players (room_code, client_id, seat, name, pawn, avatar, last_seen)
+  values (p_code, me, p_pawn, seat_name, p_pawn, seat_avatar, now())
   on conflict (room_code, client_id)
-  do update set seat = excluded.seat, name = excluded.name,
-                pawn = excluded.pawn, last_seen = now();
+  do update set seat = excluded.seat, name = excluded.name, pawn = excluded.pawn,
+                avatar = excluded.avatar, last_seen = now();
 end;
 $$;
 
@@ -228,12 +320,14 @@ security definer
 set search_path = public
 as $$
 declare
-  me        uuid := auth.uid();
-  room      public.rooms%rowtype;
-  holder    public.room_players%rowtype;
-  held      boolean;
-  seat_name text;
-  seat_pawn smallint;
+  me          uuid := auth.uid();
+  room        public.rooms%rowtype;
+  holder      public.room_players%rowtype;
+  held        boolean;
+  seat_name   text;
+  seat_pawn   smallint;
+  seat_avatar text;
+  account     uuid;
 begin
   if me is null then
     raise exception 'Identité manquante' using errcode = '28000';
@@ -265,7 +359,14 @@ begin
   -- The name and pawn come from the board, not from the roster row that is
   -- about to be replaced: the engine froze them at kickoff and they are what
   -- every other player already sees.
-  seat_name := coalesce(room.state->'players'->(p_seat::int)->>'name', 'Joueur');
+  --
+  -- Except for an account, which answers to its pseudo wherever it sits. The
+  -- board catches up through a `rename` the device plays once seated, so
+  -- every client renames at the same point in the sequence. A guest finds no
+  -- profile, and the select leaves all three empty.
+  select pr.id, pr.pseudo, pr.avatar into account, seat_name, seat_avatar
+    from public.profiles pr where pr.id = me;
+  seat_name := coalesce(seat_name, room.state->'players'->(p_seat::int)->>'name', 'Joueur');
   seat_pawn := coalesce((room.state->'players'->(p_seat::int)->>'pawn')::smallint, p_seat);
 
   if held and holder.client_id <> me then
@@ -273,11 +374,19 @@ begin
      where room_code = p_code and client_id = holder.client_id;
   end if;
 
-  insert into public.room_players (room_code, client_id, seat, name, pawn, last_seen)
-  values (p_code, me, p_seat, seat_name, seat_pawn, now())
+  insert into public.room_players (room_code, client_id, seat, name, pawn, avatar, last_seen)
+  values (p_code, me, p_seat, seat_name, seat_pawn, seat_avatar, now())
   on conflict (room_code, client_id)
-  do update set seat = excluded.seat, name = excluded.name,
-                pawn = excluded.pawn, last_seen = now();
+  do update set seat = excluded.seat, name = excluded.name, pawn = excluded.pawn,
+                avatar = excluded.avatar, last_seen = now();
+
+  -- A chair changing hands is a new occupant in the record of the game;
+  -- somebody reclaiming their own after a reload is not.
+  if room.game_id is not null and room.seat_order->>(p_seat::int) is distinct from me::text then
+    insert into public.game_seats (game_id, seat, account_id, name, pawn, from_turn)
+    values (room.game_id, p_seat, account, seat_name, seat_pawn,
+            coalesce((room.state->>'turnCount')::integer, 0));
+  end if;
 
   -- The engine numbers players by their position in this list, so taking the
   -- chair means taking the index. Rebuilding the list instead would renumber
@@ -311,6 +420,11 @@ begin
   end if;
   if btrim(p_name) = '' then
     raise exception 'Il faut un nom' using errcode = '22023';
+  end if;
+  -- An account's name at the table is its pseudo, which is unique; renaming
+  -- the chair would let it sit under somebody else's.
+  if exists (select 1 from public.profiles where id = me) then
+    raise exception 'Votre nom est votre pseudo : changez-le depuis votre profil' using errcode = '42501';
   end if;
 
   update public.room_players
@@ -432,6 +546,10 @@ $$;
 -- Kickoff. The seed is fixed here so every client builds the same board, and
 -- the seating is frozen because the engine numbers players by their position
 -- in this list.
+--
+-- The game's record opens here too, with one occupant per chair. It is
+-- written by the database, never by a device: nothing a client sends says
+-- who played, only which chairs its identity holds.
 create or replace function public.open_room(
   p_code text, p_seed bigint, p_state jsonb, p_seat_order jsonb
 )
@@ -441,7 +559,8 @@ security definer
 set search_path = public
 as $$
 declare
-  me uuid := auth.uid();
+  me  uuid := auth.uid();
+  gid uuid;
 begin
   if not exists (select 1 from public.rooms where code = p_code and host_id = me) then
     raise exception 'Seul l''hôte peut lancer la partie' using errcode = '42501';
@@ -451,8 +570,80 @@ begin
      set status = 'playing', seed = p_seed, state = p_state,
          version = 1, seat_order = p_seat_order, updated_at = now()
    where code = p_code and status = 'lobby';
+
+  -- Already under way: a second kickoff changed nothing, so it records nothing.
+  if not found then
+    return;
+  end if;
+
+  insert into public.games (room_code) values (p_code) returning id into gid;
+  update public.rooms set game_id = gid where code = p_code;
+
+  insert into public.game_seats (game_id, seat, account_id, name, pawn, from_turn)
+  select gid,
+         (o.idx - 1)::smallint,
+         pr.id,
+         coalesce(p_state->'players'->(o.idx::int - 1)->>'name', 'Joueur'),
+         coalesce((p_state->'players'->(o.idx::int - 1)->>'pawn')::smallint, (o.idx - 1)::smallint),
+         0
+    from jsonb_array_elements_text(p_seat_order) with ordinality as o(client, idx)
+    left join public.profiles pr on pr.id::text = o.client;
 end;
 $$;
+
+-- Closes a game's record: how it ended, and the board it ended on. Only a
+-- game still in play is touched, so a finished game is never overwritten by
+-- the room being swept afterwards.
+--
+-- A table nobody with an account sat at is nobody's history, and it is
+-- dropped rather than kept for no one to read. Guests are most games.
+create or replace function public.close_game(
+  p_game uuid, p_state jsonb, p_status text, p_at timestamptz
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.games
+     set status = p_status,
+         ended_at = p_at,
+         turn_count = coalesce((p_state->>'turnCount')::integer, 0),
+         winner = (p_state->>'winner')::smallint,
+         final = p_state - 'log'
+   where id = p_game and status = 'playing';
+
+  delete from public.games g
+   where g.id = p_game
+     and not exists (
+       select 1 from public.game_seats s
+        where s.game_id = g.id and s.account_id is not null
+     );
+end;
+$$;
+
+-- A room being deleted — swept for idleness, or closed by hand — takes its
+-- game with it into the history as unfinished, on the last board anybody
+-- wrote. `updated_at` is when that was, which is when play really stopped.
+create or replace function public.close_game_with_room()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.game_id is not null and old.state is not null then
+    perform public.close_game(old.game_id, old.state, 'unfinished', old.updated_at);
+  end if;
+  return old;
+end;
+$$;
+
+drop trigger if exists rooms_close_game on public.rooms;
+create trigger rooms_close_game
+  before delete on public.rooms
+  for each row execute function public.close_game_with_room();
 
 -- One turn's worth of progress, written only by the device that played it.
 -- Compare-and-set on `version`: a refused write means that device is behind
@@ -465,6 +656,7 @@ set search_path = public
 as $$
 declare
   hit integer;
+  gid uuid;
 begin
   if not exists (
     select 1 from public.room_players
@@ -482,9 +674,176 @@ begin
          version = p_from + 1,
          status = case when p_state->>'phase' = 'game-over' then 'over' else 'playing' end,
          updated_at = now()
-   where code = p_code and version = p_from;
+   where code = p_code and version = p_from
+  returning game_id into gid;
   get diagnostics hit = row_count;
+
+  -- The last snapshot of a game is the one its record keeps.
+  if hit = 1 and gid is not null and p_state->>'phase' = 'game-over' then
+    perform public.close_game(gid, p_state, 'finished', now());
+  end if;
+
   return hit = 1;
+end;
+$$;
+
+-- ---------------------------------------------------------------- accounts
+--
+-- A guest is an anonymous session; an account is a session signed in with
+-- Google that has saved a profile. Only the second kind can write one —
+-- asked of `auth.users` rather than of a claim in the request, which is the
+-- whole reason these are functions and not policies.
+
+-- Whether a pseudo can be taken. The caller's own counts as free, so that
+-- saving a profile without changing the pseudo is not refused by itself.
+-- The answer is advice for the form: `save_profile` settles it for real.
+create or replace function public.pseudo_available(p_pseudo text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select not exists (
+    select 1 from public.profiles
+     where pseudo = btrim(p_pseudo) and id is distinct from auth.uid()
+  );
+$$;
+
+-- This session's profile, or null — a guest, or an account that has not
+-- chosen its pseudo yet.
+create or replace function public.get_my_profile()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select jsonb_build_object('pseudo', pr.pseudo, 'avatar', pr.avatar)
+    from public.profiles pr
+   where pr.id = auth.uid();
+$$;
+
+-- Creating the profile, or changing it. Two people reaching for the same
+-- pseudo at the same second are settled by the unique constraint: the second
+-- is told plainly, which is the one answer the form cannot give on its own.
+create or replace function public.save_profile(p_pseudo text, p_avatar text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Identité manquante' using errcode = '28000';
+  end if;
+  if not exists (select 1 from auth.users where id = me and is_anonymous is not true) then
+    raise exception 'Connectez-vous avec Google pour créer un profil' using errcode = '42501';
+  end if;
+
+  begin
+    insert into public.profiles (id, pseudo, avatar)
+    values (me, btrim(p_pseudo), p_avatar)
+    on conflict (id)
+    do update set pseudo = excluded.pseudo, avatar = excluded.avatar, updated_at = now();
+  exception
+    when unique_violation then
+      raise exception 'Ce pseudo existe déjà' using errcode = '23505';
+    when check_violation then
+      raise exception 'Ce pseudo ou cette photo ne convient pas' using errcode = '23514';
+  end;
+end;
+$$;
+
+-- Deleting the account, for good. The profile goes with the user row; every
+-- seat it held in somebody's history keeps the name it sat under and loses
+-- the link to a person. A game nobody with an account is left in has no one
+-- to be read by, and goes too.
+create or replace function public.delete_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Identité manquante' using errcode = '28000';
+  end if;
+
+  delete from auth.users where id = me;
+
+  delete from public.games g
+   where g.status <> 'playing'
+     and not exists (
+       select 1 from public.game_seats s
+        where s.game_id = g.id and s.account_id is not null
+     );
+end;
+$$;
+
+-- The history: this account's most recent games, newest first.
+--
+-- The people in them come back once each, apart from the games. A photo is
+-- a few kilobytes, and repeating it at every seat of twenty games is how an
+-- evening's opponents turned into a megabyte.
+create or replace function public.get_my_games(p_limit integer default 20)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := auth.uid();
+begin
+  if me is null then
+    raise exception 'Identité manquante' using errcode = '28000';
+  end if;
+
+  return (
+    with mine as (
+      select g.*
+        from public.games g
+       where exists (
+         select 1 from public.game_seats s where s.game_id = g.id and s.account_id = me
+       )
+       order by g.started_at desc
+       limit least(greatest(coalesce(p_limit, 20), 1), 50)
+    ),
+    seats as (
+      select s.* from public.game_seats s join mine m on m.id = s.game_id
+    )
+    select jsonb_build_object(
+      'games', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'id', m.id,
+          'status', m.status,
+          'started_at', m.started_at,
+          'ended_at', m.ended_at,
+          'turn_count', m.turn_count,
+          'winner', m.winner,
+          'final', m.final,
+          'seats', coalesce((
+            select jsonb_agg(jsonb_build_object(
+              'seat', s.seat, 'account_id', s.account_id, 'name', s.name,
+              'pawn', s.pawn, 'from_turn', s.from_turn
+            ) order by s.seat, s.from_turn, s.id)
+            from seats s where s.game_id = m.id
+          ), '[]'::jsonb)
+        ) order by m.started_at desc)
+        from mine m
+      ), '[]'::jsonb),
+      'people', coalesce((
+        select jsonb_object_agg(pr.id::text, jsonb_build_object('pseudo', pr.pseudo, 'avatar', pr.avatar))
+          from public.profiles pr
+         where pr.id in (select account_id from seats)
+      ), '{}'::jsonb)
+    )
+  );
 end;
 $$;
 
@@ -516,10 +875,24 @@ begin
     'public.set_idle_timeout(text, integer)',
     'public.leave_room(text)',
     'public.open_room(text, bigint, jsonb, jsonb)',
-    'public.advance_room(text, jsonb, integer)'
+    'public.advance_room(text, jsonb, integer)',
+    'public.pseudo_available(text)',
+    'public.get_my_profile()',
+    'public.save_profile(text, text)',
+    'public.delete_account()',
+    'public.get_my_games(integer)'
   ] loop
     execute format('revoke execute on function %s from public, anon', fn);
     execute format('grant execute on function %s to authenticated', fn);
+  end loop;
+
+  -- Reached only from the functions above, which run as the owner. Callable
+  -- from outside, closing a game would let anybody end somebody else's.
+  foreach fn in array array[
+    'public.close_game(uuid, jsonb, text, timestamptz)',
+    'public.close_game_with_room()'
+  ] loop
+    execute format('revoke execute on function %s from public, anon, authenticated', fn);
   end loop;
 end;
 $$;

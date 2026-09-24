@@ -66,39 +66,42 @@ inachevées) avec leur détail. Le jeu reste entièrement jouable sans compte.
 
 ### Phase 2 — Schéma (`supabase/schema.sql`)
 
-- [ ] 8. Table `profiles` : `id` (→ `auth.users`, cascade), `pseudo` unique et sensible
+- [x] 8. Table `profiles` : `id` (→ `auth.users`, cascade), `pseudo` unique et sensible
       à la casse (3–14 caractères, sans espace au début ni à la fin, lettres, chiffres,
       espace, `_`, `.` et `-`), `avatar` (null ou `data:image/…` de 60 000 caractères au
       plus), `created_at`, `updated_at`. RLS activée, sans aucune policy.
-- [ ] 9. Tables `games` (`id`, `room_code`, `status` playing/finished/unfinished,
+- [x] 9. Tables `games` (`id`, `room_code`, `status` playing/finished/unfinished,
       `started_at`, `ended_at`, `turn_count`, `winner`, `final`) et `game_seats` (`id`,
       `game_id` en cascade, `seat`, `account_id` → `profiles` en `set null`, `name`,
       `pawn`, `from_turn`), avec un index sur `(account_id, game_id)`. Colonne
       `rooms.game_id`. RLS activée, sans aucune policy.
-- [ ] 10. Fonction interne `account_of(uid)` : le profil de l'appelant, ou null pour un
-      invité.
-- [ ] 11. `pseudo_available(p_pseudo)`, `get_my_profile()`, `save_profile(p_pseudo,
+- [x] 10. ~~Fonction interne `account_of(uid)`~~ : inutile, chaque fonction lit le profil
+      directement (un `select … into` vide pour un invité). `close_game` factorise la
+      clôture d'une partie, et supprime une partie où aucun compte n'a joué.
+- [x] 11. `pseudo_available(p_pseudo)`, `get_my_profile()`, `save_profile(p_pseudo,
       p_avatar)` (refusé aux sessions anonymes ; une violation d'unicité remonte en
       « Ce pseudo existe déjà »), `delete_account()` (supprime la ligne `auth.users` ;
       la cascade et le `set null` font le reste).
-- [ ] 12. `claim_seat` : pour un compte, le nom et la photo viennent du profil,
+- [x] 12. `claim_seat` : pour un compte, le nom et la photo viennent du profil,
       jamais de la requête.
-- [ ] 13. `resume_seat` : pour un compte, le nom de la liste des joueurs = son pseudo,
+- [x] 13. `resume_seat` : pour un compte, le nom de la liste des joueurs = son pseudo,
       avec sa photo. Si la chaise change de mains, ajouter une ligne `game_seats`
       (`from_turn` = `state.turnCount`).
-- [ ] 14. `open_room` : créer la ligne `games`, remplir `rooms.game_id`, et ajouter
+- [x] 14. `open_room` : créer la ligne `games`, remplir `rooms.game_id`, et ajouter
       une ligne `game_seats` par joueur (nom et pion lus dans l'état, `account_id` si
       le client a un profil).
-- [ ] 15. `advance_room` : à l'arrivée en `game-over`, passer la partie en `finished`
+- [x] 15. `advance_room` : à l'arrivée en `game-over`, passer la partie en `finished`
       (`ended_at`, `turn_count`, `winner`, `final = p_state - 'log'`).
-- [ ] 16. Trigger `before delete on rooms` : une partie encore `playing` passe en
+- [x] 16. Trigger `before delete on rooms` : une partie encore `playing` passe en
       `unfinished`, avec le dernier état connu et `ended_at = old.updated_at`.
-- [ ] 17. `get_my_games(p_limit default 20)` : `{ games: [...], people: { id: { pseudo,
+- [x] 17. `get_my_games(p_limit default 20)` : `{ games: [...], people: { id: { pseudo,
       avatar } } }`. Les photos sont dédupliquées dans `people` plutôt que répétées
       à chaque siège.
-- [ ] 18. Ajouter chaque nouvelle fonction à la boucle `revoke` / `grant`.
-- [ ] 19. Appliquer le schéma au projet Supabase, à la main ou via le connecteur
+- [x] 18. Ajouter chaque nouvelle fonction à la boucle `revoke` / `grant`.
+- [x] 19. Appliquer le schéma au projet Supabase, à la main ou via le connecteur
       après ta confirmation. Vérifier les avertissements de sécurité (advisors).
+      Fait le 24/09/2026 après 75 vérifications sur PGlite (profils, pseudo pris,
+      partie complète, chaise reprise, expiration, invités seuls, suppression, droits).
       Commit `feat(db): record online games and player profiles`.
 
 ### Phase 3 — Client d'authentification
