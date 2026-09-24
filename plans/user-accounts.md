@@ -106,23 +106,25 @@ inachevées) avec leur détail. Le jeu reste entièrement jouable sans compte.
 
 ### Phase 3 — Client d'authentification
 
-- [ ] 20. `src/net/sessionStorage.ts` : l'adaptateur de stockage (fonction pure,
-      testable avec de faux stockages) ; `tests/session-storage.test.ts`.
-- [ ] 21. `src/net/supabase.ts` : brancher l'adaptateur et le flux `pkce`.
-- [ ] 22. `src/net/pseudo.ts` : `validatePseudo` (mêmes règles que la contrainte SQL,
+- [x] 20. `src/net/authStorage.ts` : l'adaptateur de stockage (fonction pure,
+      testable avec de faux stockages) ; `tests/auth-storage.test.ts`.
+- [x] 21. `src/net/supabase.ts` : brancher l'adaptateur et le flux `pkce`.
+- [x] 22. `src/net/pseudo.ts` : `validatePseudo` (mêmes règles que la contrainte SQL,
       messages en français) et `suggestPseudo` (à partir du nom Google) ;
       `tests/pseudo.test.ts`.
-- [ ] 23. `src/net/account.ts` : `signInWithGoogle()` (redirection vers la page
+- [x] 23. `src/net/account.ts` : `signInWithGoogle()` (redirection vers la page
       courante), `signOut()`, `fetchMyProfile`, `isPseudoAvailable`, `saveProfile`,
       `deleteAccount`, `fetchMyGames`. Chaque appel vérifie l'erreur qu'il reçoit.
-- [ ] 24. `src/net/accountStore.ts` : store zustand `{ status: loading | guest |
+      Les lectures de l'historique (place, victoire, reprises, noms du jour) sont dans
+      `src/net/history.ts`, testées par `tests/history.test.ts`.
+- [x] 24. `src/net/accountStore.ts` : store zustand `{ status: loading | guest |
       needs-profile | ready, profile, googleName, googlePhoto }`, initialisé au
       démarrage et resynchronisé à chaque événement d'auth en relisant
       `getSession()`. Retirer `?code=` de l'URL une fois la session obtenue.
-- [ ] 25. `src/ui/avatarImage.ts` : `fileToAvatar(file)` et `urlToAvatar(url)` (canvas,
+- [x] 25. `src/ui/avatarImage.ts` : `fileToAvatar(file)` et `urlToAvatar(url)` (canvas,
       recadrage centré, 128 px, WebP puis JPEG) ; échec explicite si l'image est
       illisible ou trop lourde.
-- [ ] 26. Vérifier : tsc et tests. Commit `feat(net): sign in with Google and keep
+- [x] 26. Vérifier : tsc et tests. Commit `feat(net): sign in with Google and keep
       the account between visits`.
 
 ### Phase 4 — Profil et tableau de bord
