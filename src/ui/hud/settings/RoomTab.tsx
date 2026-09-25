@@ -1,3 +1,4 @@
+import { useAccount } from "../../../net/accountStore";
 import { useState } from "react";
 import { useRoom } from "../../../net/roomStore";
 import { useVoice } from "../../../net/voice";
@@ -135,6 +136,8 @@ function IdentitySection() {
   const clientId = useRoom((s) => s.clientId);
   const hostId = useRoom((s) => s.hostId);
   const spectating = useIsSpectator();
+  // An account's name is its pseudo; it is changed from the profile.
+  const isAccount = useAccount((s) => s.status === "ready");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
 
@@ -179,9 +182,13 @@ function IdentitySection() {
             </span>
           )
         }
-        description="Le nom que voient les autres sur le plateau, dans le journal et dans la discussion."
+        description={
+          isAccount
+            ? "Votre pseudo : c'est lui que voient les autres. Il se change depuis votre profil, à l'accueil."
+            : "Le nom que voient les autres sur le plateau, dans le journal et dans la discussion."
+        }
       >
-        {editing ? (
+        {isAccount ? null : editing ? (
           <>
             <Fitting icon="check" label="Valider" disabled={draft.trim().length === 0} onClick={commit} />
             <Fitting icon="close" label="Annuler" onClick={() => setEditing(false)} />

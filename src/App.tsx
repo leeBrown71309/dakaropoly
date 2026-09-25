@@ -8,6 +8,7 @@ import { Setup } from "./ui/screens/Setup";
 import { Online } from "./ui/screens/Online";
 import { GameScreen } from "./ui/screens/GameScreen";
 import { GameOver } from "./ui/screens/GameOver";
+import { Profile } from "./ui/screens/Profile";
 import { RotateGate } from "./ui/screens/RotateGate";
 
 function Screen() {
@@ -21,6 +22,8 @@ function Screen() {
       return <GameScreen />;
     case "over":
       return <GameOver />;
+    case "profile":
+      return <Profile />;
     default:
       return <Home />;
   }

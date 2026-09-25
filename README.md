@@ -10,6 +10,10 @@ bun install
 bun run dev        # serveur de développement → http://localhost:5173
 ```
 
+### Comptes (facultatif)
+
+La connexion Google passe par Supabase Auth. Dans Google Cloud Console, créer un identifiant OAuth « Application Web » avec l'URI de redirection `https://<ref>.supabase.co/auth/v1/callback` ; dans Supabase, activer le fournisseur Google (Authentication → Providers) et ajouter les URL du site et de `localhost` aux Redirect URLs. Sans cela, le jeu reste jouable en invité.
+
 ## 🛠️ Commandes
 
 | Commande | Effet |

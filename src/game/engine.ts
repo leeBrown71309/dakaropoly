@@ -41,6 +41,7 @@ export function createGame(
       jailAttempts: 0,
       getOutCards: 0,
       bankrupt: false,
+      eliminationOrder: null,
       stats: {
         rentsCollected: 0,
         rentPaid: 0,
@@ -527,6 +528,7 @@ function transferAssets(
       st.mortgaged = false;
     }
   });
+  debtor.eliminationOrder = s.players.filter((p) => p.bankrupt).length + 1;
   debtor.bankrupt = true;
   // An eliminated player is not in jail, they are out of the game. The flag
   // survived the bankruptcy and the roster went on printing a jail mark
