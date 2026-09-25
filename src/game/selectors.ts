@@ -255,6 +255,24 @@ export function netWorthOf(s: GameState, player: Player): number {
   return total;
 }
 
+/**
+ * The final order of the table, best first: everyone still playing by net
+ * worth, then everyone eliminated, the last to fall ranked highest.
+ *
+ * The one ranking in the game — the end-of-game screen and the history of
+ * past games both print it, so they can never disagree about who came
+ * second. A board recorded before departures were counted carries no order
+ * for its eliminated players; they keep the order the table held them in.
+ */
+export function standingsOf(s: GameState): Player[] {
+  const departed = (p: Player): number => p.eliminationOrder ?? 0;
+  return [...s.players].sort((a, b) => {
+    if (a.bankrupt !== b.bankrupt) return a.bankrupt ? 1 : -1;
+    if (a.bankrupt) return departed(b) - departed(a);
+    return netWorthOf(s, b) - netWorthOf(s, a);
+  });
+}
+
 export function ownedPositions(s: GameState, playerId: number): number[] {
   return BOARD.map((_, pos) => pos).filter((pos) => s.tiles[pos]?.owner === playerId);
 }

@@ -50,6 +50,7 @@ function forceTurnStart(s: GameState): GameState {
       inJail: false,
       jailAttempts: 0,
       bankrupt: false,
+      eliminationOrder: null,
     })),
   };
 }

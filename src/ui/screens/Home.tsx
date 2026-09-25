@@ -8,6 +8,7 @@ import { Card, BrassRule } from "../kit/Surface";
 import { Button } from "../kit/Button";
 import { PawnGlyph } from "../icons/PawnGlyph";
 import { Icon } from "../icons/Icon";
+import { AccountChip } from "../profile/AccountChip";
 
 /** Title screen, set like a printed travel poster for the city. */
 export function Home() {
@@ -144,6 +145,8 @@ export function Home() {
         >
           Fait maison, pour les soirées en famille. Créé par Leeeight.
         </p>
+
+        <AccountChip compact={compact} />
       </div>
     </div>
   );
