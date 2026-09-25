@@ -281,6 +281,12 @@ its case**, and an optional photo stored as a 128 px data URL.
 - **Chairs are renumbered at kickoff.** In the lobby `room_players.seat` is the
   pawn; `open_room` rewrites it to the engine player number. Before that fix,
   a table whose pawns were not 0, 1, 2… kicked off with everyone a spectator.
+- **`tests/backend.test.ts` plays the backend with bots**: the real
+  `schema.sql` in PGlite behind a stubbed `auth.users` / `auth.uid()`, full
+  games by the real engine written through `advance_room`, the history read
+  back with `src/net/history.ts`. No Google, no network — after sign-in an
+  account is only an id, and that is all the functions see. Run it after any
+  change to `schema.sql`, then apply the schema by hand as usual.
 - `PlayerMark` shows an account's photo (ringed in the player colour, pawn
   pinned to the corner) through `useSeatPhoto`, which goes through
   `seat_order`, never the roster's seat number.
