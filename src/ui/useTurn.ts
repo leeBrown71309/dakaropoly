@@ -1,5 +1,22 @@
 import { useGame } from "../game/store";
 import { actorFor, mayAct, tradeRoleFor, type TradeRole } from "../game/selectors";
+import { useRoom } from "../net/roomStore";
+
+/**
+ * The photo of whoever sits in a player's chair right now, online — `null`
+ * for a guest, and always in a hot-seat game, where there is no room.
+ *
+ * Looked up through `seat_order` rather than by the roster's seat number:
+ * the order names the chair's current holder, including somebody who took
+ * it over halfway through the game.
+ */
+export function useSeatPhoto(playerId: number): string | null {
+  return useRoom((s) => {
+    const holder = s.seatOrder[playerId];
+    if (!holder) return null;
+    return s.seats.find((row) => row.clientId === holder && row.seat !== null)?.avatar ?? null;
+  });
+}
 
 /**
  * Whether this device may act right now.

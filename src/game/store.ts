@@ -12,7 +12,7 @@ export interface Toast {
   tone: "good" | "bad" | "info";
 }
 
-export type Screen = "home" | "setup" | "online" | "game" | "over";
+export type Screen = "home" | "setup" | "online" | "game" | "over" | "profile";
 
 /** Whether the online screen opens on creating a room or joining one. */
 export type OnlineMode = "create" | "join";
@@ -108,6 +108,8 @@ interface Store {
   toggleRoster: () => void;
   setRosterTab: (tab: RosterTab) => void;
   openSetup: () => void;
+  /** The account: its profile, and the history of its online games. */
+  openProfile: () => void;
   onlineMode: OnlineMode;
   /** `code` pre-fills the field when arriving from a shared link. */
   openOnline: (mode: OnlineMode, code?: string) => void;
@@ -426,6 +428,7 @@ export const useGame = create<Store>()(
     toggleRoster: () => set((s) => ({ rosterOpen: !s.rosterOpen })),
     setRosterTab: (rosterTab) => set({ rosterTab }),
     openSetup: () => set({ screen: "setup" }),
+    openProfile: () => set({ screen: "profile" }),
     onlineMode: "create",
     pendingCode: "",
     openOnline: (mode, code = "") =>
@@ -589,14 +592,18 @@ export const useGame = create<Store>()(
     }),
     {
       name: "dakaropoly/save",
-      version: 2,
+      version: 3,
       // A save written before offers could sit on the table has no
-      // `pendingTrade`. Filling it in beats dropping an evening's game,
-      // which is what a bare version bump would do.
+      // `pendingTrade`, and one written before departures were counted has
+      // no `eliminationOrder`. Filling them in beats dropping an evening's
+      // game, which is what a bare version bump would do.
       migrate: (persisted, from) => {
         const saved = persisted as PersistedState;
         if (from < 2 && saved.game && saved.game.pendingTrade === undefined) {
           saved.game.pendingTrade = null;
+        }
+        if (from < 3 && saved.game) {
+          for (const p of saved.game.players) p.eliminationOrder ??= null;
         }
         return saved;
       },

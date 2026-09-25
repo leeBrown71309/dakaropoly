@@ -48,7 +48,12 @@ export type IconName =
   | "micOff"
   | "plus"
   | "minus"
-  | "close";
+  | "close"
+  | "user"
+  | "image"
+  | "logout"
+  | "trash"
+  | "clock";
 
 /** Renders a shared outline, so the HUD and the printed board never drift. */
 const outline = (name: OutlineName): ReactNode => (
@@ -275,6 +280,38 @@ const ICONS: Record<IconName, ReactNode> = {
     <>
       <path d="M4.2 19.8h3.2L19 8.2l-3.2-3.2L4.2 16.6z" />
       <path d="M14.6 6.2l3.2 3.2" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8.4" r="3.9" />
+      <path d="M4.6 20.2a7.4 7.4 0 0 1 14.8 0" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3.6" y="4.6" width="16.8" height="14.8" rx="2.4" />
+      <circle cx="9" cy="9.8" r="1.7" />
+      <path d="M3.9 17.2l5-4.6 3.6 3.2 2.8-2.4 4.8 4.2" />
+    </>
+  ),
+  logout: (
+    <>
+      <path d="M13.6 4.4H6.2a1.8 1.8 0 0 0-1.8 1.8v11.6a1.8 1.8 0 0 0 1.8 1.8h7.4" />
+      <path d="M10.4 12h9.8M16.6 8.2l3.8 3.8-3.8 3.8" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M4.4 6.6h15.2M9.4 6.6V4.4h5.2v2.2" />
+      <path d="M6.4 6.6l.9 12.6a1.6 1.6 0 0 0 1.6 1.4h6.2a1.6 1.6 0 0 0 1.6-1.4l.9-12.6" />
+      <path d="M10.2 10.6v6M13.8 10.6v6" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="8.4" />
+      <path d="M12 7.4V12l3.2 2.2" />
     </>
   ),
 };

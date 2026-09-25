@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createAuthStorage } from "./authStorage";
 
 /**
  * The Supabase connection, created once and only when the online mode is
@@ -25,20 +26,18 @@ export function supabase(): SupabaseClient {
         persistSession: true,
         autoRefreshToken: true,
         /*
-         * Per tab, not per browser.
+         * A guest per tab, an account per browser — see `authStorage`.
          *
-         * Local storage is shared by every tab of the same browser, so two
-         * windows opened side by side would be the *same* player and the
-         * second would silently take over the first one's seat. That is not
-         * only a testing nuisance: two tabs is how anyone tries this out
-         * before a real game. Session storage survives a reload, which is
-         * what a player needs, and gives each tab its own identity, which is
-         * what a tester needs.
-         *
-         * The cost is that closing a tab loses the seat until reclaiming one
-         * is built.
+         * Local storage alone made two windows side by side the *same*
+         * player, and the second silently took over the first one's seat.
+         * Session storage alone signed an account out every time its tab
+         * closed. Each kind of session goes where its owner lives.
          */
-        storage: sessionStorage,
+        storage: createAuthStorage(sessionStorage, localStorage),
+        // Google hands back a code on the redirect, exchanged here for the
+        // session; the verifier waits out the round trip in the tab.
+        flowType: "pkce",
+        detectSessionInUrl: true,
       },
       realtime: { params: { eventsPerSecond: 20 } },
     });
@@ -49,9 +48,10 @@ export function supabase(): SupabaseClient {
 /**
  * Establishes an identity for this device, signing in anonymously if needed.
  *
- * Nobody types anything — this is not a login. It exists so the database can
- * tell one device from another and refuse to let anyone edit a seat that is
- * not theirs.
+ * Nobody types anything — this is not the login. It exists so the database
+ * can tell one device from another and refuse to let anyone edit a seat that
+ * is not theirs. A player signed in with Google already has an identity, and
+ * it is the one that sits down.
  */
 export async function ensureSession(): Promise<string> {
   const sb = supabase();

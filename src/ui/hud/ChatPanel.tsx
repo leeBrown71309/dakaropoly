@@ -7,6 +7,7 @@ import { useCompact } from "../useViewport";
 import { BrassRule } from "../kit/Surface";
 import { Fitting } from "../kit/Button";
 import { Icon } from "../icons/Icon";
+import { Avatar } from "../kit/Avatar";
 
 const clock = (at: number): string =>
   new Date(at).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -89,6 +90,15 @@ export function ChatPanel() {
           ) : (
             messages.map((m) => (
               <div key={m.id} className={`leading-snug ${compact ? "py-[3px]" : "py-[4px]"}`}>
+                {/* The face of whoever is seated under this id now; a spectator has none. */}
+                {seats.find((s) => s.clientId === m.clientId)?.avatar && (
+                  <Avatar
+                    src={seats.find((s) => s.clientId === m.clientId)?.avatar ?? null}
+                    name={m.name}
+                    size={compact ? 14 : 16}
+                    className="mr-1.5 inline-block align-[-3px]"
+                  />
+                )}
                 <span
                   className={`font-bold ${m.clientId === myClientId ? "text-gold-700" : "text-teal-700"} ${
                     compact ? "text-[11px]" : "text-[12px]"
