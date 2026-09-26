@@ -17,7 +17,8 @@
 
 create table if not exists public.rooms (
   code       text primary key,                 -- 'QH5C42'
-  status     text not null default 'lobby',    -- lobby | playing | over
+  status     text not null default 'lobby'
+             check (status in ('lobby', 'playing', 'over')),
   host_id    uuid not null,
   seed       bigint,                           -- agreed RNG seed
   state      jsonb,                            -- GameState snapshot
@@ -43,9 +44,9 @@ alter table public.rooms
 create table if not exists public.room_players (
   room_code text not null references public.rooms(code) on delete cascade,
   client_id uuid not null,
-  seat      smallint,      -- 0..7; null marks a spectator
-  name      text not null,
-  pawn      smallint,
+  seat      smallint check (seat >= 0 and seat < 8),  -- null marks a spectator
+  name      text not null check (char_length(name) between 1 and 14),
+  pawn      smallint check (pawn >= 0 and pawn < 8),
   avatar    text,          -- an account's photo, copied from its profile on sitting down
   joined_at timestamptz not null default now(),
   -- Whether somebody is still there has to be a fact the database can check:
@@ -584,23 +585,19 @@ begin
   -- chair that "was still taken" by the other player's pawn number.
   --
   -- Anybody who sat down after the host's list was drawn up is not in the
-  -- game, and stands. The renumbering goes through negative numbers because
-  -- the seat index is checked row by row: moving pawn 2 onto seat 1 while
-  -- pawn 1 still holds it would collide halfway through.
-  update public.room_players p
+  -- game, and stands. The whole table stands up first and sits back down in
+  -- order, because the seat index is checked row by row: moving pawn 2 onto
+  -- seat 1 while pawn 1 still holds it would collide halfway through. A null
+  -- seat is outside both unique indexes and passes `room_players_seat_check`;
+  -- a negative one, the way this used to go, is refused by it.
+  update public.room_players
      set seat = null
-   where p.room_code = p_code
-     and p.seat is not null
-     and not (p_seat_order ? p.client_id::text);
+   where room_code = p_code and seat is not null;
 
   update public.room_players p
-     set seat = -o.idx::smallint
+     set seat = (o.idx - 1)::smallint
     from jsonb_array_elements_text(p_seat_order) with ordinality as o(client, idx)
    where p.room_code = p_code and p.client_id::text = o.client;
-
-  update public.room_players
-     set seat = -seat - 1
-   where room_code = p_code and seat < 0;
 
   insert into public.games (room_code) values (p_code) returning id into gid;
   update public.rooms set game_id = gid where code = p_code;
